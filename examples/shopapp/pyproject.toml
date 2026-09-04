@@ -1,0 +1,6 @@
+[project]
+name = "shopapp"
+version = "0.1.0"
+description = "Demo fixture for bugpacket: a small storefront."
+requires-python = ">=3.12"
+dependencies = []
