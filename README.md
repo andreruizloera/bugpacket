@@ -51,15 +51,21 @@ BugPacket written to .bugpacket/
   packet.json  (structured)
   files/       (4 relevant files)
 
-Repository source size: 40,949 tokens estimated
+Repository source size: 41,008 tokens estimated
 BugPacket size: 1,221 tokens estimated
 Context reduction: 97.0%
 ```
 
-Token counts use a chars/4 heuristic and are always labeled as estimates. The
-three numbers above are from a clean checkout of this repository; the packet
-grows when your working tree has uncommitted changes, because your diff and the
-files in it are part of the context an agent needs.
+Token counts use a chars/4 heuristic and are always labeled as estimates.
+
+Two of those numbers are checked by `./demo.sh` on every CI run: the four
+relevant files, and the 1,221-token packet. The other two are not, because they
+are facts about this repository rather than about the tool. "Repository source
+size" is the total over every source file here, so it moves on any commit that
+changes any file's size, and the reduction percentage moves with it. All four
+are from a clean checkout; the packet grows when your working tree has
+uncommitted changes, because your diff and the files in it are part of the
+context an agent needs.
 
 The generated `packet.md` from that same run, abridged:
 

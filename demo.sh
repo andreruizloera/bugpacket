@@ -77,9 +77,11 @@ check "$PY_PACKET" "- tests/test_payment.py::test_total_with_percent_coupon"
 # tree makes the packet bigger. Only that one file is expected to differ here,
 # because this script edits it on purpose and restores it on exit.
 #
-# "Repository source size" is the total over every source file in this repo, so
-# it moves whenever any file here changes size, including this one and the
-# README. If that check is what failed, the README simply needs the new number.
+# The packet size and the file count are properties of the tool's behaviour on
+# this failure, so they are checked. "Repository source size" and the reduction
+# derived from it are properties of how large this repository happens to be
+# today, and would move on any commit that changes the size of any file,
+# including this one; the README says so rather than freezing them here.
 DIRTY="$(git status --porcelain | grep -v "$TARGET" || true)"
 if [ -z "$DIRTY" ]; then
   (
@@ -87,9 +89,7 @@ if [ -z "$DIRTY" ]; then
     uv run --project ../.. bugpacket run -- python -m pytest tests/test_payment.py
   ) > /tmp/bugpacket-demo-part1.txt 2>&1
   check /tmp/bugpacket-demo-part1.txt "files/       (4 relevant files)"
-  check /tmp/bugpacket-demo-part1.txt "Repository source size: 40,949 tokens estimated"
   check /tmp/bugpacket-demo-part1.txt "BugPacket size: 1,221 tokens estimated"
-  check /tmp/bugpacket-demo-part1.txt "Context reduction: 97.0%"
 else
   echo "(working tree is dirty, so the README's token numbers are not checked)"
 fi
