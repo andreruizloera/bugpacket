@@ -68,7 +68,27 @@ echo
 PY_PACKET="examples/shopapp/.bugpacket/packet.md"
 check "$PY_PACKET" "KeyError: 'percentage'"
 check "$PY_PACKET" "examples/shopapp/shop/payment.py:15"
+check "$PY_PACKET" "examples/shopapp/shop/cart.py:30 in checkout"
 check "$PY_PACKET" "rank 1: stack trace"
+check "$PY_PACKET" "- tests/test_payment.py::test_total_with_percent_coupon"
+
+# The token numbers the README pastes are only reproducible from a clean
+# checkout: an uncommitted diff legitimately belongs in the packet, so a dirty
+# tree makes the packet bigger. Only that one file is expected to differ here,
+# because this script edits it on purpose and restores it on exit.
+DIRTY="$(git status --porcelain | grep -v "$TARGET" || true)"
+if [ -z "$DIRTY" ]; then
+  (
+    cd examples/shopapp
+    uv run --project ../.. bugpacket run -- python -m pytest tests/test_payment.py
+  ) > /tmp/bugpacket-demo-part1.txt 2>&1
+  check /tmp/bugpacket-demo-part1.txt "files/       (4 relevant files)"
+  check /tmp/bugpacket-demo-part1.txt "Repository source size: 40,628 tokens estimated"
+  check /tmp/bugpacket-demo-part1.txt "BugPacket size: 1,221 tokens estimated"
+  check /tmp/bugpacket-demo-part1.txt "Context reduction: 97.0%"
+else
+  echo "(working tree is dirty, so the README's token numbers are not checked)"
+fi
 
 # ---------------------------------------------------------------- part 2 ---
 
