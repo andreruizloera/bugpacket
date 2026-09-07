@@ -58,14 +58,15 @@ Context reduction: 97.0%
 
 Token counts use a chars/4 heuristic and are always labeled as estimates.
 
-Two of those numbers are checked by `./demo.sh` on every CI run: the four
-relevant files, and the 1,221-token packet. The other two are not, because they
-are facts about this repository rather than about the tool. "Repository source
-size" is the total over every source file here, so it moves on any commit that
-changes any file's size, and the reduction percentage moves with it. All four
-are from a clean checkout; the packet grows when your working tree has
-uncommitted changes, because your diff and the files in it are part of the
-context an agent needs.
+That block is the output of one real run, from a clean checkout on a macOS
+laptop. The four relevant files are checked by `./demo.sh` on every CI run,
+because which files BugPacket picks is what the tool decides and is the same
+everywhere. The token numbers are not checked and will not match yours exactly:
+a packet embeds the environment it was built in, so its size differs between
+machines, and "Repository source size" is the total over every source file in
+this repository, so it moves whenever any file here changes. Your packet also
+grows when your working tree has uncommitted changes, because your diff and the
+files in it are part of the context an agent needs.
 
 The generated `packet.md` from that same run, abridged:
 

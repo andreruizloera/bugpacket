@@ -77,11 +77,12 @@ check "$PY_PACKET" "- tests/test_payment.py::test_total_with_percent_coupon"
 # tree makes the packet bigger. Only that one file is expected to differ here,
 # because this script edits it on purpose and restores it on exit.
 #
-# The packet size and the file count are properties of the tool's behaviour on
-# this failure, so they are checked. "Repository source size" and the reduction
-# derived from it are properties of how large this repository happens to be
-# today, and would move on any commit that changes the size of any file,
-# including this one; the README says so rather than freezing them here.
+# The file count is a property of the tool's behaviour on this failure and is
+# the same everywhere, so it is checked. The token numbers are not: a packet
+# embeds the environment it was built in (platform, interpreter versions), so
+# its size differs between macOS and a Linux runner, and "Repository source
+# size" moves on any commit that changes any file's size. The README reports
+# those as one real run's output rather than as invariants.
 DIRTY="$(git status --porcelain | grep -v "$TARGET" || true)"
 if [ -z "$DIRTY" ]; then
   (
@@ -89,7 +90,6 @@ if [ -z "$DIRTY" ]; then
     uv run --project ../.. bugpacket run -- python -m pytest tests/test_payment.py
   ) > /tmp/bugpacket-demo-part1.txt 2>&1
   check /tmp/bugpacket-demo-part1.txt "files/       (4 relevant files)"
-  check /tmp/bugpacket-demo-part1.txt "BugPacket size: 1,221 tokens estimated"
 else
   echo "(working tree is dirty, so the README's token numbers are not checked)"
 fi
