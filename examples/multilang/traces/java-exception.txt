@@ -1,0 +1,8 @@
+Exception in thread "main" java.lang.IllegalStateException: checkout failed for 1 item(s)
+	at com.example.shop.Checkout.run(Checkout.java:11)
+	at com.example.shop.Main.main(Main.java:10)
+Caused by: java.lang.NullPointerException: Cannot invoke "java.lang.Integer.intValue()" because the return value of "java.util.Map.get(Object)" is null
+	at com.example.shop.Pricing.applyCoupon(Pricing.java:8)
+	at com.example.shop.Cart.checkout(Cart.java:13)
+	at com.example.shop.Checkout.run(Checkout.java:9)
+	... 1 more

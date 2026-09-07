@@ -12,6 +12,7 @@ from bugpacket.environment import capture_environment
 from bugpacket.gitcapture import capture_git, find_repo_root
 from bugpacket.packet import write_packet
 from bugpacket.ranking import rank_files
+from bugpacket.resolve import FrameResolver
 from bugpacket.stacktrace import ParsedOutput, parse_output
 from bugpacket.tokens import format_token_report
 
@@ -83,7 +84,7 @@ def _failing_test_paths(command: list[str], parsed: ParsedOutput, cwd: Path) -> 
         candidate = arg.split("::", 1)[0]
         name = Path(candidate).name
         if (
-            candidate.endswith((".py", ".js", ".mjs", ".ts"))
+            candidate.endswith((".py", ".js", ".mjs", ".ts", ".go", ".rs", ".java", ".kt"))
             and ("test" in name.lower() or "spec" in name.lower())
             and (cwd / candidate).is_file()
         ):
@@ -117,12 +118,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     repo_root = find_repo_root(cwd) or cwd
     parsed = parse_output(proc.stdout + "\n" + proc.stderr)
     git = capture_git(cwd)
+    # One resolver for the whole run, so the file list and the printed stack
+    # cannot disagree about where a frame lives, and the tree is walked once.
+    resolver = FrameResolver(repo_root=repo_root, cwd=cwd)
     ranked = rank_files(
         repo_root=repo_root,
         cwd=cwd,
         frames=parsed.unique_frames(),
         failing_test_paths=_failing_test_paths(command, parsed, cwd),
         git_changed_files=git.changed_files if git else [],
+        resolver=resolver,
     )
 
     result = write_packet(
@@ -138,6 +143,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         repo_root=repo_root,
         cwd=cwd,
         budget_tokens=max(args.budget, 500),
+        resolver=resolver,
     )
 
     if args.as_json:

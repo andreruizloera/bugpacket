@@ -11,6 +11,7 @@ from typing import Any
 
 from bugpacket import __version__
 from bugpacket.models import Frame, GitInfo, RankedFile
+from bugpacket.resolve import FrameResolver
 from bugpacket.stacktrace import ParsedOutput
 from bugpacket.tokens import ESTIMATE_NOTE, estimate_repo_source_tokens, estimate_tokens
 
@@ -24,8 +25,13 @@ _FENCE_LANGUAGES = {
     ".json": "json",
     ".jsx": "jsx",
     ".mjs": "javascript",
+    ".go": "go",
+    ".java": "java",
+    ".kt": "kotlin",
     ".py": "python",
     ".pyi": "python",
+    ".rs": "rust",
+    ".scala": "scala",
     ".sh": "bash",
     ".toml": "toml",
     ".ts": "typescript",
@@ -120,29 +126,44 @@ def select_files(
     return included, omitted
 
 
-def _display_frames(frames: list[Frame], repo_root: Path, cwd: Path) -> list[str]:
-    """Frames formatted for the packet, restricted to files inside the repo."""
+_LANGUAGE_TAGS = {"node": " (node)", "rust": " (rust)", "go": " (go)", "jvm": " (jvm)"}
+
+
+def _display_frames(
+    frames: list[Frame], repo_root: Path, resolver: FrameResolver
+) -> tuple[list[str], list[str]]:
+    """Frames formatted for the packet, plus notes about ones it could not place.
+
+    Returns (stack lines, notes). A frame that resolved by suffix search says
+    so, because that is an inference rather than a path the runtime gave; a
+    frame whose name matched several repository files is reported with the
+    candidates instead of being silently dropped.
+    """
     lines: list[str] = []
+    notes: list[str] = []
     for frame in frames:
-        path = Path(frame.path)
-        resolved = None
-        for candidate in [path] if path.is_absolute() else [cwd / path, repo_root / path]:
-            if candidate.is_file():
-                resolved = candidate.resolve()
-                break
-        if resolved is None:
+        resolution = resolver.resolve(frame)
+        if not resolution.found:
+            if resolution.how == "ambiguous":
+                shown = ", ".join(resolution.candidates[:4])
+                if len(resolution.candidates) > 4:
+                    shown += f", and {len(resolution.candidates) - 4} more"
+                notes.append(
+                    f"{frame.path}:{frame.line} matched several files and was not included: {shown}"
+                )
             continue
         try:
-            rel = resolved.relative_to(repo_root.resolve()).as_posix()
+            rel = resolution.path.relative_to(repo_root.resolve()).as_posix()  # type: ignore[union-attr]
         except ValueError:
             continue
         text = f"{rel}:{frame.line}"
         if frame.function:
             text += f" in {frame.function}"
-        if frame.language == "node":
-            text += " (node)"
+        text += _LANGUAGE_TAGS.get(frame.language, "")
+        if resolution.how == "suffix":
+            text += "  [matched by file name; the trace gave no usable path]"
         lines.append(text)
-    return lines
+    return lines, notes
 
 
 def render_markdown(
@@ -154,27 +175,44 @@ def render_markdown(
     git: GitInfo | None,
     environment: dict[str, Any],
     repo_root: Path,
-    cwd: Path,
+    resolver: FrameResolver,
 ) -> str:
     parts: list[str] = ["# BugPacket", ""]
 
     parts += ["## Failure", ""]
     failure = parsed.distilled_failure() or f"Command exited with code {exit_code}."
     parts += ["```", failure, "```", ""]
-    if parsed.failed_tests:
+    if parsed.root_cause is not None:
+        parts.append(
+            f"That is the root cause of a chain of {len(parsed.cause_chain)} exceptions. "
+            "The outermost, which is where the trace starts and usually not where "
+            "the bug is:"
+        )
+        parts += ["", "```", parsed.cause_chain[0], "```", ""]
+    if parsed.failed_tests or parsed.failed_test_names:
         parts.append("Failing tests:")
         parts.extend(f"- {path}::{test}" for path, test in dict.fromkeys(parsed.failed_tests))
+        parts.extend(f"- {name}" for name in dict.fromkeys(parsed.failed_test_names))
         parts.append("")
 
     parts += ["## Reproduction", ""]
     parts += ["```", f"$ {shlex.join(command)}", f"exit code: {exit_code}", "```", ""]
 
     parts += ["## Relevant stack", ""]
-    frame_lines = _display_frames(parsed.unique_frames(), repo_root, cwd)
+    frame_lines, frame_notes = _display_frames(parsed.unique_frames(), repo_root, resolver)
     if frame_lines:
         parts += ["```", *frame_lines, "```", ""]
+    elif parsed.unique_frames():
+        parts += [
+            "A stack trace was parsed, but none of its frames could be tied to a "
+            "file in this repository.",
+            "",
+        ]
     else:
         parts += ["No stack trace detected in the output.", ""]
+    if frame_notes:
+        parts.extend(f"- {note}" for note in frame_notes)
+        parts.append("")
 
     parts += ["## Relevant files", ""]
     if included:
@@ -226,6 +264,17 @@ def _truncate_output(text: str) -> str:
     return text[:_MAX_OUTPUT_CHARS] + "\n... [truncated by bugpacket]"
 
 
+def _resolved_rel(frame: Frame, repo_root: Path, resolver: FrameResolver) -> str | None:
+    """The frame's repo-relative file, or None when it could not be placed."""
+    resolution = resolver.resolve(frame)
+    if resolution.path is None:
+        return None
+    try:
+        return resolution.path.relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return None
+
+
 def build_json(
     command: list[str],
     exit_code: int,
@@ -239,6 +288,8 @@ def build_json(
     repo_tokens: int,
     packet_tokens: int,
     reduction: float,
+    repo_root: Path,
+    resolver: FrameResolver,
 ) -> dict[str, Any]:
     return {
         "bugpacket_version": __version__,
@@ -246,13 +297,19 @@ def build_json(
         "command": command,
         "exit_code": exit_code,
         "failure": parsed.distilled_failure(),
-        "failed_tests": [f"{path}::{test}" for path, test in parsed.failed_tests],
+        "root_cause": parsed.root_cause,
+        "cause_chain": parsed.cause_chain,
+        "failed_tests": [f"{path}::{test}" for path, test in parsed.failed_tests]
+        + list(parsed.failed_test_names),
         "stack": [
             {
                 "path": frame.path,
                 "line": frame.line,
                 "function": frame.function,
                 "language": frame.language,
+                "vendored": frame.vendored,
+                "resolved": _resolved_rel(frame, repo_root, resolver),
+                "resolution": resolver.resolve(frame).how,
             }
             for frame in parsed.unique_frames()
         ],
@@ -314,12 +371,15 @@ def write_packet(
     repo_root: Path,
     cwd: Path,
     budget_tokens: int,
+    resolver: FrameResolver | None = None,
 ) -> PacketResult:
     """Write packet.md, packet.json, and files/ under out_dir."""
+    if resolver is None:
+        resolver = FrameResolver(repo_root=repo_root, cwd=cwd)
     included, omitted = select_files(ranked, budget_tokens)
 
     markdown = render_markdown(
-        command, exit_code, parsed, included, omitted, git, environment, repo_root, cwd
+        command, exit_code, parsed, included, omitted, git, environment, repo_root, resolver
     )
     packet_tokens = estimate_tokens(markdown)
     repo_tokens = estimate_repo_source_tokens(repo_root)
@@ -338,6 +398,8 @@ def write_packet(
         repo_tokens,
         packet_tokens,
         reduction,
+        repo_root,
+        resolver,
     )
 
     files_dir = out_dir / "files"

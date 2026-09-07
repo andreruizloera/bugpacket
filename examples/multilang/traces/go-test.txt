@@ -1,0 +1,7 @@
+?   	github.com/example/shop	[no test files]
+?   	github.com/example/shop/cart	[no test files]
+--- FAIL: TestApplyCouponPercentOff (0.00s)
+    pricing_test.go:9: ApplyCoupon(1200, 10%) = 1200, want 1080
+FAIL
+FAIL	github.com/example/shop/pricing	0.296s
+FAIL

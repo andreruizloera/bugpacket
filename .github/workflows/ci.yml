@@ -21,3 +21,58 @@ jobs:
         run: uv run ruff check .
       - name: Tests
         run: uv run pytest
+
+  # Runs the demo with real Rust, Go, and JVM toolchains present, so demo.sh
+  # takes its live path and BugPacket parses output produced by those compilers
+  # on this run. If a toolchain changes the shape of a panic or a stack trace,
+  # this job goes red instead of the committed recordings quietly becoming
+  # fiction.
+  demo-live-toolchains:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Show toolchain versions
+        run: |
+          go version
+          java -version
+          cargo --version
+      - name: Sync environment
+        run: uv sync --python 3.12
+      - name: Demo
+        run: ./demo.sh
+
+  # The same demo on a machine with no Rust, Go, or JVM toolchain, which is
+  # what a stranger cloning this repository usually has. demo.sh must fall back
+  # to replaying the recorded output and reach the same conclusions.
+  demo-no-toolchains:
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - name: Install git and uv
+        run: |
+          apt-get update -qq && apt-get install -y -qq git curl >/dev/null
+          pip install --quiet uv
+      - uses: actions/checkout@v4
+      - name: Confirm no toolchains are present
+        run: |
+          for tool in go cargo java javac; do
+            if command -v "$tool" >/dev/null 2>&1; then
+              echo "$tool is unexpectedly present; this job must test the replay path" >&2
+              exit 1
+            fi
+          done
+          echo "no go, cargo, java, or javac: the replay path will be used"
+      - name: Sync environment
+        run: uv sync --python 3.12
+      - name: Demo
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          ./demo.sh

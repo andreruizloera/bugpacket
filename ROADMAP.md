@@ -2,9 +2,23 @@
 
 Honest future work, in rough priority order. None of this exists yet.
 
-- **More stack-trace dialects.** Rust panics and backtraces, Go panics, Java
-  and JVM stack traces, Ruby, and browser-flavored JS traces. The parser is
-  regex-based and each dialect is a contained addition with fixtures.
+- **Compiler and build-error diagnostics.** `cargo build` with a type error,
+  `javac`, `go build`, and `tsc` all fail without producing a stack trace, so
+  BugPacket reads nothing from them today. Rust's `error[E0308]` plus its
+  `--> src/main.rs:10:5` location line is the obvious first target, and the
+  frame resolution added for the runtime dialects already handles the paths
+  those diagnostics use.
+- **The remaining stack-trace dialects.** Ruby, and browser-flavored JS
+  traces. Rust, Go, and JVM shipped; each new dialect is a contained addition
+  to `dialects.py` with a recorded fixture.
+- **Stack-frame ordering.** Frames are kept in the order the runtime printed
+  them, which means Python reads outermost-first and Rust, Go, and the JVM read
+  innermost-first. Normalising to one direction, and saying which, would make
+  the "Relevant stack" section read the same way for every language.
+- **Import following for Rust and the JVM.** Both are handled today by the
+  trace naming every frame's file, which is usually enough. A Rust `mod`/`use`
+  graph and a JVM `import` reader would add the collaborator that the trace
+  passed through without failing in.
 - **Jest and vitest awareness.** Parse their failure summaries the way pytest
   summaries are parsed today, so the failing spec file ranks at 2 even when
   the trace is noisy.

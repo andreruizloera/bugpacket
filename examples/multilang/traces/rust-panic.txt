@@ -1,0 +1,30 @@
+warning: field `name` is never read
+ --> src/cart.rs:5:9
+  |
+4 | pub struct Item {
+  |            ---- field in this struct
+5 |     pub name: String,
+  |         ^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+
+thread 'main' (92774640) panicked at src/pricing.rs:5:25:
+no entry found for key
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::option::expect_failed
+   3: <core::option::Option<&u32>>::expect
+             at /opt/homebrew/Cellar/rust/1.98.0/lib/rustlib/src/rust/library/core/src/option.rs:969:21
+   4: <std::collections::hash::map::HashMap<alloc::string::String, u32> as core::ops::index::Index<&str>>::index
+             at /opt/homebrew/Cellar/rust/1.98.0/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1517:23
+   5: shop::pricing::apply_coupon
+             at ./src/pricing.rs:5:25
+   6: shop::cart::checkout
+             at ./src/cart.rs:12:5
+   7: shop::main
+             at ./src/main.rs:10:27
+   8: <fn() as core::ops::function::FnOnce<()>>::call_once
+             at /opt/homebrew/Cellar/rust/1.98.0/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.

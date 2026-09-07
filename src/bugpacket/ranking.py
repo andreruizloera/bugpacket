@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 from bugpacket.models import Frame, RankedFile
+from bugpacket.resolve import FrameResolver
 from bugpacket.tokens import SKIP_DIR_NAMES
 
 _MAX_FILE_BYTES = 512_000
@@ -60,18 +61,11 @@ def _is_rankable(path: Path, repo_root: Path) -> bool:
         return False
 
 
-def _resolve_candidate(raw: str, cwd: Path, repo_root: Path) -> Path | None:
-    """Map a path string from a stack trace onto a real file in the repo."""
-    candidates = []
-    p = Path(raw)
-    if p.is_absolute():
-        candidates.append(p)
-    else:
-        candidates.extend((cwd / p, repo_root / p))
-    for candidate in candidates:
-        if _is_rankable(candidate, repo_root):
-            return candidate.resolve()
-    return None
+def _rankable_or_none(path: Path | None, repo_root: Path) -> Path | None:
+    """Keep a resolved path only if it is a file worth putting in the packet."""
+    if path is None or not _is_rankable(path, repo_root):
+        return None
+    return path.resolve()
 
 
 def _python_local_imports(file: Path, repo_root: Path) -> list[Path]:
@@ -122,6 +116,33 @@ def _js_local_imports(file: Path, repo_root: Path) -> list[Path]:
     return found
 
 
+def _go_package_siblings(file: Path, repo_root: Path) -> list[Path]:
+    """The other non-test `.go` files in this file's package.
+
+    Go has no import statement to follow here, because a Go package IS its
+    directory: `pricing_test.go` and `pricing.go` are the same package and the
+    test never imports the thing it tests. A `go test` failure reports only the
+    test file, so without this the packet would contain the assertion and not
+    the function it asserts on.
+
+    Only non-test siblings are taken, and only from the one directory; this
+    does not walk into subdirectories, which are different packages.
+    """
+    found: list[Path] = []
+    try:
+        entries = sorted(file.parent.iterdir())
+    except OSError:
+        return []
+    for candidate in entries:
+        if candidate == file or candidate.suffix != ".go":
+            continue
+        if candidate.name.endswith("_test.go"):
+            continue
+        if _is_rankable(candidate, repo_root):
+            found.append(candidate.resolve())
+    return found
+
+
 def _find_manifests(cwd: Path, repo_root: Path) -> list[Path]:
     """Nearest manifest of each kind, searching from cwd up to the repo root."""
     found: dict[str, Path] = {}
@@ -144,8 +165,11 @@ def rank_files(
     frames: list[Frame],
     failing_test_paths: list[str],
     git_changed_files: list[str],
+    resolver: FrameResolver | None = None,
 ) -> list[RankedFile]:
     """Produce the deterministic, rank-ordered file list for the packet."""
+    if resolver is None:
+        resolver = FrameResolver(repo_root=repo_root, cwd=cwd)
     best: dict[str, RankedFile] = {}
 
     def consider(path: Path, rank: int, line: int | None = None) -> None:
@@ -160,13 +184,13 @@ def rank_files(
 
     # Rank 1: files named in the stack trace.
     for frame in frames:
-        resolved = _resolve_candidate(frame.path, cwd, repo_root)
+        resolved = _rankable_or_none(resolver.resolve(frame).path, repo_root)
         if resolved is not None:
             consider(resolved, 1, frame.line)
 
     # Rank 2: the failing test file(s).
     for raw in failing_test_paths:
-        resolved = _resolve_candidate(raw, cwd, repo_root)
+        resolved = _rankable_or_none(resolver.resolve_path(raw), repo_root)
         if resolved is not None:
             consider(resolved, 2)
 
@@ -177,6 +201,8 @@ def rank_files(
             imports = _python_local_imports(entry.path, repo_root)
         elif entry.path.suffix in _JS_EXTS:
             imports = _js_local_imports(entry.path, repo_root)
+        elif entry.path.suffix == ".go":
+            imports = _go_package_siblings(entry.path, repo_root)
         else:
             imports = []
         for imported in imports:

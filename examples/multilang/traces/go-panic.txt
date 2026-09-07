@@ -1,0 +1,9 @@
+total: 1200
+panic: runtime error: index out of range [2] with length 1
+
+goroutine 1 [running]:
+github.com/example/shop/cart.Receipt(...)
+	/private/tmp/bugpacket-build/shop/cart/cart.go:21
+main.main()
+	/private/tmp/bugpacket-build/shop/main.go:13 +0x178
+exit status 2

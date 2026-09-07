@@ -10,3 +10,6 @@ build/
 .mypy_cache/
 .bugpacket/
 .DS_Store
+examples/multilang/rust/target/
+examples/multilang/rust/Cargo.lock
+examples/multilang/java/out/

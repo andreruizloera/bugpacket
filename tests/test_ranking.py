@@ -93,3 +93,64 @@ def test_deterministic(tmp_path):
     first = [(r.rel, r.rank) for r in rank_files(**args)]
     second = [(r.rel, r.rank) for r in rank_files(**args)]
     assert first == second
+
+
+def test_go_package_siblings_rank_third(tmp_path):
+    """A `go test` failure names only the test file; its package is the subject."""
+    (tmp_path / "pricing").mkdir()
+    (tmp_path / "pricing" / "pricing_test.go").write_text("package pricing\n")
+    (tmp_path / "pricing" / "pricing.go").write_text("package pricing\n")
+    (tmp_path / "pricing" / "helper_test.go").write_text("package pricing\n")
+    (tmp_path / "cart").mkdir()
+    (tmp_path / "cart" / "cart.go").write_text("package cart\n")
+    frames = [Frame(path="pricing_test.go", line=9, function=None, language="go")]
+    ranked = rank_files(tmp_path, tmp_path, frames, [], [])
+    by_rank = {entry.rel: entry.rank for entry in ranked}
+    assert by_rank["pricing/pricing_test.go"] == 1
+    assert by_rank["pricing/pricing.go"] == 3
+    # Another package is not the subject of this test, and a second test file
+    # is not the code under test.
+    assert "cart/cart.go" not in by_rank
+    assert "pricing/helper_test.go" not in by_rank
+
+
+def test_jvm_frames_rank_first_through_their_package_hint(tmp_path):
+    target = tmp_path / "src/main/java/com/example/shop/Pricing.java"
+    target.parent.mkdir(parents=True)
+    target.write_text("package com.example.shop;\n")
+    frames = [
+        Frame(
+            path="Pricing.java",
+            line=8,
+            function="com.example.shop.Pricing.applyCoupon",
+            language="jvm",
+            path_hint="com/example/shop/Pricing.java",
+        )
+    ]
+    ranked = rank_files(tmp_path, tmp_path, frames, [], [])
+    assert [(e.rel, e.rank) for e in ranked] == [("src/main/java/com/example/shop/Pricing.java", 1)]
+    assert ranked[0].lines == {8}
+
+
+def test_an_ambiguous_frame_ranks_no_file_at_all(tmp_path):
+    for pkg in ("alpha", "beta"):
+        (tmp_path / pkg).mkdir()
+        (tmp_path / pkg / "util_test.go").write_text("package x\n")
+    frames = [Frame(path="util_test.go", line=3, function=None, language="go")]
+    ranked = rank_files(tmp_path, tmp_path, frames, [], [])
+    assert ranked == []
+
+
+def test_a_vendored_frame_never_ranks_a_same_named_repository_file(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "option.rs").write_text("// ours\n")
+    frames = [
+        Frame(
+            path="/tc/lib/rustlib/src/rust/library/core/src/option.rs",
+            line=969,
+            function="core::option::expect_failed",
+            language="rust",
+            vendored=True,
+        )
+    ]
+    assert rank_files(tmp_path, tmp_path, frames, [], []) == []
