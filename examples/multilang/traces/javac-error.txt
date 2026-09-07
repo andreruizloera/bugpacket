@@ -1,0 +1,9 @@
+src/main/java/com/example/shop/Pricing.java:8: error: incompatible types: Integer cannot be converted to String
+        String percent = coupon.get("percentage");
+                                   ^
+src/main/java/com/example/shop/Pricing.java:9: error: bad operand types for binary operator '*'
+        return amountCents - (amountCents * percent) / 100;
+                                          ^
+  first type:  int
+  second type: String
+2 errors

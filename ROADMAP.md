@@ -1,13 +1,19 @@
 # Roadmap
 
-Honest future work, in rough priority order. None of this exists yet.
+Honest future work, in rough priority order. Nothing below is implemented;
+where a shipped feature is named, it is named only to say what is left of it.
 
-- **Compiler and build-error diagnostics.** `cargo build` with a type error,
-  `javac`, `go build`, and `tsc` all fail without producing a stack trace, so
-  BugPacket reads nothing from them today. Rust's `error[E0308]` plus its
-  `--> src/main.rs:10:5` location line is the obvious first target, and the
-  frame resolution added for the runtime dialects already handles the paths
-  those diagnostics use.
+- **The remaining compiler diagnostics.** rustc, `go build`, and javac ship;
+  `tsc` (`src/app.ts(10,5): error TS2322: ...`), clang and gcc
+  (`main.c:10:5: error: ...`), and MSBuild are the ones left. Each is one line
+  format and a recorded capture, in `diagnostics.py` beside the three that
+  exist, but none of them should be written from memory: the recordings in
+  `examples/multilang/traces/` are what keeps the parsers honest, and a
+  toolchain has to be installed to make one.
+- **A second independent compiler error.** Only the first is reported as the
+  failure, because the errors after it are usually consequences of it. Two
+  genuinely unrelated errors in one build are not distinguishable from that
+  today; nothing short of reading the messages would tell them apart.
 - **The remaining stack-trace dialects.** Ruby, and browser-flavored JS
   traces. Rust, Go, and JVM shipped; each new dialect is a contained addition
   to `dialects.py` with a recorded fixture.

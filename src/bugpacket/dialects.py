@@ -362,3 +362,4 @@ class ParsedLines:
     error_lines: list[str] = field(default_factory=list)
     failed_test_names: list[str] = field(default_factory=list)
     cause_chain: list[str] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)

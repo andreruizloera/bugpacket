@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Demo, in two parts.
+# Demo, in three parts.
 #
 # Part 1: introduce a realistic bug in the example Python shop app, run its
 # tests through bugpacket, and show the packet that comes out.
@@ -8,6 +8,10 @@
 # ways that cannot simply be opened. Each example runs in a throwaway git repo
 # so the packet is about the example and not about this repository's own
 # working tree.
+#
+# Part 3: the same three projects with an edit that stops them compiling. A
+# build failure produces no stack trace at all, only compiler diagnostics, so
+# this is a different parse from every trace in part 2.
 #
 # Every line this script prints that the README also pastes is checked here.
 # If the tool's output drifts from the documentation, this exits nonzero and
@@ -105,13 +109,14 @@ REPO_ROOT="$(pwd)"
 # Each example becomes its own git repository, the way a real Rust, Go, or
 # JVM project is, so the packet's paths are that project's paths.
 setup_repo() {
-  local lang="$1"
-  cp -R "examples/multilang/$lang" "$WORK/$lang"
-  cp examples/multilang/replay.sh "$WORK/$lang/replay.sh"
-  mkdir -p "$WORK/$lang/traces"
-  cp examples/multilang/traces/*.txt "$WORK/$lang/traces/"
+  # setup_repo <destination name> [source example, default the same name]
+  local name="$1" lang="${2:-$1}"
+  cp -R "examples/multilang/$lang" "$WORK/$name"
+  cp examples/multilang/replay.sh "$WORK/$name/replay.sh"
+  mkdir -p "$WORK/$name/traces"
+  cp examples/multilang/traces/*.txt "$WORK/$name/traces/"
   (
-    cd "$WORK/$lang"
+    cd "$WORK/$name"
     git init -q
     git add -A
     git -c user.email=demo@example.com -c user.name=demo commit -qm "example project"
@@ -206,6 +211,71 @@ if grep -qE '^### .*(option|function)\.rs' "$RUST_PACKET"; then
   echo "DEMO CHECK FAILED: a Rust standard-library file was ranked into the packet" >&2
   FAILURES=$((FAILURES + 1))
 fi
+
+
+# ---------------------------------------------------------------- part 3 ---
+
+break_source() {
+  # break_source <file> <old text> <new text>
+  python3 - "$@" <<'PY'
+import sys
+from pathlib import Path
+
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+target = Path(path)
+text = target.read_text()
+if old not in text:
+    raise SystemExit(f"break_source: {old!r} is not in {path}")
+target.write_text(text.replace(old, new))
+PY
+}
+
+# The pristine project is committed first and broken after, so the edit that
+# stopped it compiling is in the packet's "Current diff" where an agent can see
+# it, which is the whole point of running a build failure through bugpacket.
+setup_broken_repo() {
+  local lang="$1"
+  setup_repo "$lang-broken" "$lang"
+}
+
+section "part 3a: rustc. A type error, so there is no stack trace at all."
+setup_broken_repo rust
+break_source "$WORK/rust-broken/src/main.rs" \
+  'coupon.insert("percent".to_string(), 10u32);' \
+  'coupon.insert("percent".to_string(), 10.0);'
+run_example rust-broken rust-compile-error 101 cargo build
+show_packet rust-broken
+RUSTC_PACKET="$WORK/rust-broken/.bugpacket/packet.md"
+check "$RUSTC_PACKET" "error[E0308]: mismatched types: expected \`&HashMap<String, u32>\`, found \`&HashMap<String, {float}>\`"
+check "$RUSTC_PACKET" "## Reported locations"
+check "$RUSTC_PACKET" "src/main.rs:10 (rust)"
+check "$RUSTC_PACKET" "src/cart.rs:10 (rust)"
+check "$RUSTC_PACKET" "### src/cart.rs (rank 1: compiler diagnostic)"
+
+section "part 3b: go build. One line, no stack, and the file it names."
+setup_broken_repo go
+break_source "$WORK/go-broken/main.go" \
+  'coupon := map[string]int{"percent": 10}' \
+  'coupon := map[string]float64{"percent": 10}'
+run_example go-broken go-build-error 1 go build ./...
+show_packet go-broken
+GOBUILD_PACKET="$WORK/go-broken/.bugpacket/packet.md"
+check "$GOBUILD_PACKET" "cannot use coupon (variable of type map[string]float64) as map[string]int value"
+check "$GOBUILD_PACKET" "main.go:12 (go)"
+check "$GOBUILD_PACKET" "### main.go (rank 1: compiler diagnostic)"
+
+section "part 3c: javac. Two errors, and the first one is the one to fix."
+setup_broken_repo java
+break_source "$WORK/java-broken/src/main/java/com/example/shop/Pricing.java" \
+  'int percent = coupon.get("percentage");' \
+  'String percent = coupon.get("percentage");'
+run_example java-broken javac-error 1 javac -d out src/main/java/com/example/shop/Pricing.java
+show_packet java-broken
+JAVAC_PACKET="$WORK/java-broken/.bugpacket/packet.md"
+check "$JAVAC_PACKET" "incompatible types: Integer cannot be converted to String"
+check "$JAVAC_PACKET" "The compiler reported 2 errors."
+check "$JAVAC_PACKET" "src/main/java/com/example/shop/Pricing.java:8 (jvm)"
+check "$JAVAC_PACKET" "src/main/java/com/example/shop/Pricing.java:9 (jvm)"
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

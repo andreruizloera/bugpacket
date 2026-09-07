@@ -36,5 +36,46 @@ cp -R java "$BUILD/javabuild"
 cp -R rust "$BUILD/rustbuild"
 (cd "$BUILD/rustbuild" && RUST_BACKTRACE=1 cargo run --quiet > "$OUT/rust-panic.txt" 2>&1) || true
 
+# The compile-error recordings. Each is the same example with one edit that
+# stops it compiling, which is a different parse from every capture above: a
+# build that fails to compile prints no stack trace at all, only diagnostics.
+break_source() {
+  # break_source <file> <old text> <new text>
+  python3 - "$@" <<'PY'
+import sys
+from pathlib import Path
+
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+target = Path(path)
+text = target.read_text()
+if old not in text:
+    raise SystemExit(f"break_source: {old!r} is not in {path}")
+target.write_text(text.replace(old, new))
+PY
+}
+
+cp -R rust "$BUILD/rustbroken"
+break_source "$BUILD/rustbroken/src/main.rs" \
+  'coupon.insert("percent".to_string(), 10u32);' \
+  'coupon.insert("percent".to_string(), 10.0);'
+(cd "$BUILD/rustbroken" && cargo build > "$OUT/rust-compile-error.txt" 2>&1) || true
+
+cp -R go "$BUILD/gobroken"
+break_source "$BUILD/gobroken/main.go" \
+  'coupon := map[string]int{"percent": 10}' \
+  'coupon := map[string]float64{"percent": 10}'
+(cd "$BUILD/gobroken" && go build ./... > "$OUT/go-build-error.txt" 2>&1) || true
+
+cp -R java "$BUILD/javabroken"
+break_source "$BUILD/javabroken/src/main/java/com/example/shop/Pricing.java" \
+  'int percent = coupon.get("percentage");' \
+  'String percent = coupon.get("percentage");'
+# Only the one file, because javac pulls its dependencies in through the
+# source path and the demo has to be able to name the same command.
+(
+  cd "$BUILD/javabroken"
+  javac -d out src/main/java/com/example/shop/Pricing.java > "$OUT/javac-error.txt" 2>&1
+) || true
+
 echo "Recorded:"
 ls -1 "$OUT"

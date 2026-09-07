@@ -10,6 +10,7 @@ from pathlib import Path
 from bugpacket import __version__, clipboard
 from bugpacket.environment import capture_environment
 from bugpacket.gitcapture import capture_git, find_repo_root
+from bugpacket.models import DIAGNOSTIC_REASON
 from bugpacket.packet import write_packet
 from bugpacket.ranking import rank_files
 from bugpacket.resolve import FrameResolver
@@ -128,6 +129,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         failing_test_paths=_failing_test_paths(command, parsed, cwd),
         git_changed_files=git.changed_files if git else [],
         resolver=resolver,
+        frame_reason=DIAGNOSTIC_REASON if parsed.diagnostics else None,
     )
 
     result = write_packet(

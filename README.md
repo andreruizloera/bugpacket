@@ -26,10 +26,12 @@ cd bugpacket
 ./demo.sh
 ```
 
-The demo runs in two parts. Part 1 introduces a realistic bug into the example
-Python shop app under `examples/shopapp`, runs its test suite through
+The demo runs in three parts. Part 1 introduces a realistic bug into the
+example Python shop app under `examples/shopapp`, runs its test suite through
 bugpacket, and shows the packet. Part 2 does the same for Rust, Go, and the
-JVM (see [Rust, Go, and the JVM](#rust-go-and-the-jvm) below). Real output from
+JVM (see [Rust, Go, and the JVM](#rust-go-and-the-jvm) below). Part 3 breaks
+the same three projects so they do not compile at all (see
+[Builds that never compile](#builds-that-never-compile)). Real output from
 part 1:
 
 ```
@@ -208,6 +210,69 @@ every push). `./demo.sh` runs the real compilers when the machine has them and
 replays those recordings when it does not, so the demo works from a clean clone
 with no Rust, Go, or JVM installed.
 
+## Builds that never compile
+
+A `cargo build` with a type error, a `go build` that will not link, and a
+`javac` run that rejects a file all fail without printing a stack trace. There
+is nothing for a trace parser to read, so until now BugPacket reported only the
+exit code. What those tools print instead is a diagnostic: a level, a message,
+and one or more source locations, which is enough to build a packet from and
+names exactly the files that matter.
+
+Real output from `./demo.sh`, part 3a, run against the example Rust project
+with one literal changed from `10u32` to `10.0`:
+
+```
+$ cargo build   (real cargo on this machine)
+  ## Failure
+  error[E0308]: mismatched types: expected `&HashMap<String, u32>`, found `&HashMap<String, {float}>`
+  ## Reproduction
+  $ cargo build
+  exit code: 101
+  ## Reported locations
+  src/main.rs:10 (rust)
+  src/cart.rs:10 (rust)
+  ## Relevant files
+  ### src/cart.rs (rank 1: compiler diagnostic)
+  ### src/main.rs (rank 1: compiler diagnostic)
+```
+
+Four decisions in there, each of them a place a naive reader would be wrong:
+
+**The useful sentence is in the label, not the header.** rustc's header says
+`mismatched types`. Which types is under the carets, on a line that also
+carries a second span underlined with dashes. The first primary label is
+folded into the message, so the failure line says what actually disagreed.
+
+**Both files are kept.** The second location comes from the `note: function
+defined here` block, not the primary span. It is the other side of the type
+error and the file you have to read to decide which side is wrong, so a reader
+that stopped at the primary span would drop the half that has the answer.
+
+**Warnings are not failures.** A warning has the same shape as an error, and
+its `-->` line points at a file that has nothing to do with the failure. The
+level is tracked so a warning's locations are never ranked into the packet; the
+recorded Rust panic in part 2d begins with a dead-code warning, which is where
+that is tested.
+
+**The first error is the failure, not the last.** This is the opposite of a
+traceback, where the last line is the exception. A compiler reports its first
+error first and the ones after it are usually consequences of it, so the packet
+leads with the first and says how many there were. javac in part 3c reports two
+errors from one bad declaration; the second is `bad operand types for binary
+operator '*'`, which is entirely a consequence of the first.
+
+`## Reported locations` replaces `## Relevant stack` when the failure is a
+build error, because calling a list of diagnostic spans a stack would be a
+small lie, and rank 1 reads `compiler diagnostic` rather than `stack trace` for
+the same reason.
+
+The recordings in `examples/multilang/traces/` include one compile failure per
+toolchain, produced by `record-traces.sh` applying one edit to each example
+project and running the real compiler. CI runs the demo both with the real
+toolchains and in a container that has none of them, so the parsers are checked
+against live compiler output on every push.
+
 ## Why?
 
 Pasting a raw test failure into an AI agent usually goes one of two ways:
@@ -282,6 +347,8 @@ Add `.bugpacket/` to your `.gitignore`.
 - parsed stack traces: CPython tracebacks, pytest-style traces, Node/V8 frames,
   Rust panics and backtraces, Go panics and `go test` failures, and JVM
   exceptions including `Caused by:` chains
+- parsed compiler diagnostics for a build that never got as far as running:
+  rustc (including the label under the carets), `go build`, and javac
 - the source files implicated by the trace, whole, with a token budget
 - the failing test file and the local modules those files import (for Go, the
   rest of the failing test's package)
@@ -301,12 +368,15 @@ Plain Python 3.12+, standard library only, in `src/bugpacket/`:
   collide. It parses Python, pytest, and Node/V8 directly.
 - `dialects.py` holds the Rust, Go, and JVM state machines. They are pure:
   text in, frames out, no filesystem.
+- `diagnostics.py` reads compiler errors, which have locations but no stack.
+  It is separate from `dialects.py` because it answers a different question:
+  not "where did this run pass through" but "where did the compiler point".
 - `resolve.py` maps a frame's path onto a real repository file, and is the
   single place both the ranking and the rendered stack ask, so the two cannot
   disagree about where a frame lives. It is also where the refusal to guess
   lives.
 - `ranking.py` assigns each candidate file a deterministic relevance rank:
-  1 stack-trace files, 2 the failing test, 3 local modules imported by those
+  1 files named by the stack trace or by a compiler diagnostic, 2 the failing test, 3 local modules imported by those
   (or, in Go, the rest of the package), 4 files in the git diff, 5 the
   dependency manifest. Ties sort by path, so the same failure always produces
   the same packet.
@@ -324,10 +394,15 @@ Plain Python 3.12+, standard library only, in `src/bugpacket/`:
 - Stack-trace parsing covers CPython, pytest, Node/V8, Rust, Go, and JVM
   formats. Ruby and browser-flavored JS traces are not parsed yet (see
   ROADMAP.md).
-- **Compiler and build errors are not parsed.** A `cargo build` that fails to
-  compile, a `javac` error, or a `go build` failure produces diagnostics, not a
-  stack trace, and BugPacket reads none of them today. The three new dialects
-  cover things that failed at run time.
+- **A compiler diagnostic is read from rustc, `go build`, and javac only.**
+  TypeScript's `tsc`, clang and gcc, and MSBuild print their own shapes and are
+  not parsed yet (see ROADMAP.md). A build tool that wraps a compiler is fine
+  as long as it passes the compiler's own text through, which cargo, `go build`
+  and a plain `javac` invocation all do.
+- **Only the first compiler error is reported as the failure.** The rest are
+  usually consequences of it, and every location all of them named is still in
+  the packet, but a genuinely independent second error is one line down rather
+  than in the headline.
 - **A frame matched by file name is an inference, and an unlucky repository
   can make it a wrong one.** If exactly one file matches, it is used, and a
   single match can still be the wrong file in a repository that vendors a copy
@@ -349,9 +424,9 @@ Plain Python 3.12+, standard library only, in `src/bugpacket/`:
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). Highlights: compiler and build-error
-diagnostics, Ruby traces, jest/vitest summaries, a configurable secret
-denylist, and function-boundary trimming.
+See [ROADMAP.md](ROADMAP.md). Highlights: `tsc` and C/C++ diagnostics, Ruby
+traces, jest/vitest summaries, a configurable secret denylist, and
+function-boundary trimming.
 
 ## Contributing
 

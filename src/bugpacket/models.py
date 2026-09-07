@@ -39,6 +39,9 @@ RANK_REASONS: dict[int, str] = {
     5: "dependency manifest",
 }
 
+DIAGNOSTIC_REASON = "compiler diagnostic"
+"""Rank 1 for a build failure, which named its files without any stack."""
+
 
 @dataclass
 class RankedFile:
@@ -48,10 +51,13 @@ class RankedFile:
     rel: str  # repo-relative POSIX path
     rank: int  # 1 (most relevant) to 5
     lines: set[int] = field(default_factory=set)  # lines referenced by stack frames
+    reason_label: str | None = None
+    """Overrides the rank's usual wording, for a rank the failure reached by a
+    route the default text would describe wrongly."""
 
     @property
     def reason(self) -> str:
-        return RANK_REASONS[self.rank]
+        return self.reason_label or RANK_REASONS[self.rank]
 
 
 @dataclass

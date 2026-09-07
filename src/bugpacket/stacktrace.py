@@ -1,16 +1,19 @@
 """Parse stack traces out of raw command output.
 
-Handles six shapes:
+Handles seven shapes:
 - standard CPython tracebacks (`Traceback (most recent call last):` blocks)
 - pytest-style tracebacks (`path.py:12: in test_x` refs and `E   Error: msg` lines)
 - Node/V8 stacks (`    at func (path.js:3:11)` frames)
 - Rust panics and `RUST_BACKTRACE` output
 - Go panics, goroutine dumps, and `go test` failures
 - JVM exceptions, including `Caused by:` chains
+- compiler diagnostics from rustc, go build, and javac, which fail without
+  producing a stack trace at all
 
-The Rust, Go, and JVM state machines live in `dialects.py`. This module owns
-the single pass over the output and the order the dialects are offered each
-line, which is the only place their regexes could collide.
+The Rust, Go, and JVM state machines live in `dialects.py`, and the compiler
+readers in `diagnostics.py`. This module owns the single pass over the output
+and the order the readers are offered each line, which is the only place their
+regexes could collide.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import re
 from dataclasses import dataclass, field
 
 from bugpacket import dialects
+from bugpacket.diagnostics import DiagnosticState, feed_diagnostic
 from bugpacket.dialects import GoState, JvmState, ParsedLines, RustState
 from bugpacket.models import Frame
 
@@ -65,6 +69,12 @@ class ParsedOutput:
     `module::tests::x --- FAILED` both identify a test without a path."""
     cause_chain: list[str] = field(default_factory=list)
     """A JVM exception chain, outermost first, when `Caused by:` appeared."""
+    diagnostics: list[str] = field(default_factory=list)
+    """Compiler errors, in the order the compiler reported them.
+
+    Kept apart from `error_lines` because they are read from the other end: a
+    compiler's first error is the one to fix and the rest are usually its
+    consequences, where a traceback's LAST line is the exception."""
 
     @property
     def root_cause(self) -> str | None:
@@ -85,6 +95,8 @@ class ParsedOutput:
         root = self.root_cause
         if root is not None:
             return root
+        if self.diagnostics:
+            return self.diagnostics[0]
         if self.error_lines:
             return self.error_lines[-1]
         if self.pytest_error_lines:
@@ -138,6 +150,7 @@ def parse_output(text: str) -> ParsedOutput:
     result = ParsedOutput()
     acc = ParsedLines()
     rust, go, jvm = RustState(), GoState(), JvmState()
+    diags = DiagnosticState()
     in_py_traceback = False
 
     for raw_line in text.splitlines():
@@ -198,6 +211,8 @@ def parse_output(text: str) -> ParsedOutput:
             continue
         if dialects.feed_jvm(line, jvm, acc):
             continue
+        if feed_diagnostic(line, diags, acc):
+            continue
 
         node_match = _NODE_FRAME_RE.match(line)
         if node_match and _looks_like_node_path(node_match.group("path")):
@@ -220,4 +235,5 @@ def parse_output(text: str) -> ParsedOutput:
     result.error_lines.extend(acc.error_lines)
     result.failed_test_names.extend(acc.failed_test_names)
     result.cause_chain.extend(acc.cause_chain)
+    result.diagnostics.extend(acc.diagnostics)
     return result

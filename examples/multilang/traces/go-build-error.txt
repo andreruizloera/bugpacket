@@ -1,0 +1,2 @@
+# github.com/example/shop
+./main.go:12:45: cannot use coupon (variable of type map[string]float64) as map[string]int value in argument to cart.Checkout

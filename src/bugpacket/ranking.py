@@ -166,27 +166,34 @@ def rank_files(
     failing_test_paths: list[str],
     git_changed_files: list[str],
     resolver: FrameResolver | None = None,
+    frame_reason: str | None = None,
 ) -> list[RankedFile]:
-    """Produce the deterministic, rank-ordered file list for the packet."""
+    """Produce the deterministic, rank-ordered file list for the packet.
+
+    `frame_reason` renames rank 1 for a failure whose frames did not come from
+    a stack trace: a compiler diagnostic names files with no stack at all.
+    """
     if resolver is None:
         resolver = FrameResolver(repo_root=repo_root, cwd=cwd)
     best: dict[str, RankedFile] = {}
 
-    def consider(path: Path, rank: int, line: int | None = None) -> None:
+    def consider(path: Path, rank: int, line: int | None = None, label: str | None = None) -> None:
         rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
         entry = best.get(rel)
         if entry is None:
             entry = RankedFile(path=path.resolve(), rel=rel, rank=rank)
             best[rel] = entry
-        entry.rank = min(entry.rank, rank)
+        if rank <= entry.rank:
+            entry.rank = rank
+            entry.reason_label = label
         if line is not None:
             entry.lines.add(line)
 
-    # Rank 1: files named in the stack trace.
+    # Rank 1: files named in the stack trace, or by a compiler diagnostic.
     for frame in frames:
         resolved = _rankable_or_none(resolver.resolve(frame).path, repo_root)
         if resolved is not None:
-            consider(resolved, 1, frame.line)
+            consider(resolved, 1, frame.line, frame_reason)
 
     # Rank 2: the failing test file(s).
     for raw in failing_test_paths:

@@ -189,6 +189,13 @@ def render_markdown(
             "the bug is:"
         )
         parts += ["", "```", parsed.cause_chain[0], "```", ""]
+    if len(parsed.diagnostics) > 1:
+        parts.append(
+            f"The compiler reported {len(parsed.diagnostics)} errors. That is the first "
+            "one, because the ones after it are usually consequences of it; every "
+            "location they named is below."
+        )
+        parts.append("")
     if parsed.failed_tests or parsed.failed_test_names:
         parts.append("Failing tests:")
         parts.extend(f"- {path}::{test}" for path, test in dict.fromkeys(parsed.failed_tests))
@@ -198,10 +205,17 @@ def render_markdown(
     parts += ["## Reproduction", ""]
     parts += ["```", f"$ {shlex.join(command)}", f"exit code: {exit_code}", "```", ""]
 
-    parts += ["## Relevant stack", ""]
+    diagnosed = bool(parsed.diagnostics)
+    parts += ["## Reported locations" if diagnosed else "## Relevant stack", ""]
     frame_lines, frame_notes = _display_frames(parsed.unique_frames(), repo_root, resolver)
     if frame_lines:
         parts += ["```", *frame_lines, "```", ""]
+    elif parsed.unique_frames() and diagnosed:
+        parts += [
+            "A compiler diagnostic was parsed, but none of the files it named "
+            "could be tied to this repository.",
+            "",
+        ]
     elif parsed.unique_frames():
         parts += [
             "A stack trace was parsed, but none of its frames could be tied to a "
@@ -299,6 +313,7 @@ def build_json(
         "failure": parsed.distilled_failure(),
         "root_cause": parsed.root_cause,
         "cause_chain": parsed.cause_chain,
+        "diagnostics": list(parsed.diagnostics),
         "failed_tests": [f"{path}::{test}" for path, test in parsed.failed_tests]
         + list(parsed.failed_test_names),
         "stack": [
