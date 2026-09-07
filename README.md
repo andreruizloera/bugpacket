@@ -51,7 +51,7 @@ BugPacket written to .bugpacket/
   packet.json  (structured)
   files/       (4 relevant files)
 
-Repository source size: 40,628 tokens estimated
+Repository source size: 40,949 tokens estimated
 BugPacket size: 1,221 tokens estimated
 Context reduction: 97.0%
 ```
