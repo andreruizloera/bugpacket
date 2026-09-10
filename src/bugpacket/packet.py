@@ -166,6 +166,63 @@ def _display_frames(
     return lines, notes
 
 
+_MAX_STACKS = 3
+"""How many stacks the packet prints. A suite with forty failing tests prints
+forty of them, and past the first few they stop earning their tokens. Whatever
+is dropped is counted in the packet, never dropped silently."""
+
+_DIRECTION_NOTE = "Innermost frame first: the top line of each stack is where the failure happened."
+
+
+def _render_stacks(
+    parsed: ParsedOutput, repo_root: Path, resolver: FrameResolver
+) -> tuple[list[str], list[str]]:
+    """The `Relevant stack` section: one block per stack, failure site on top.
+
+    One command's output holds one stack per failing test, and a JVM failure
+    holds one per exception in its `Caused by:` chain. They are printed
+    separately because concatenating them produces a list whose adjacent lines
+    never called each other.
+    """
+    stacks = parsed.ordered_stacks()
+    rendered: list[tuple[str, list[str]]] = []
+    notes: list[str] = []
+    for stack in stacks:
+        lines, stack_notes = _display_frames(stack.frames, repo_root, resolver)
+        notes.extend(stack_notes)
+        if lines:
+            rendered.append((stack.block.label, lines))
+
+    if not rendered:
+        if parsed.unique_frames():
+            return [
+                "A stack trace was parsed, but none of its frames could be tied to a "
+                "file in this repository.",
+                "",
+            ], notes
+        return ["No stack trace detected in the output.", ""], notes
+
+    shown, dropped = rendered[:_MAX_STACKS], rendered[_MAX_STACKS:]
+    parts = [_DIRECTION_NOTE, ""]
+    if len(rendered) > 1:
+        parts[0] = (
+            f"{len(rendered)} stacks, each printed innermost frame first: the top "
+            "line of each is where that failure happened."
+        )
+    for label, lines in shown:
+        if len(shown) > 1 and label:
+            parts.append(f"{label}:")
+            parts.append("")
+        parts += ["```", *lines, "```", ""]
+    if dropped:
+        parts.append(
+            f"{len(dropped)} further stack(s) not printed: "
+            + ", ".join(label or "unnamed" for label, _ in dropped)
+        )
+        parts.append("")
+    return parts, notes
+
+
 def render_markdown(
     command: list[str],
     exit_code: int,
@@ -207,23 +264,23 @@ def render_markdown(
 
     diagnosed = bool(parsed.diagnostics)
     parts += ["## Reported locations" if diagnosed else "## Relevant stack", ""]
-    frame_lines, frame_notes = _display_frames(parsed.unique_frames(), repo_root, resolver)
-    if frame_lines:
-        parts += ["```", *frame_lines, "```", ""]
-    elif parsed.unique_frames() and diagnosed:
-        parts += [
-            "A compiler diagnostic was parsed, but none of the files it named "
-            "could be tied to this repository.",
-            "",
-        ]
-    elif parsed.unique_frames():
-        parts += [
-            "A stack trace was parsed, but none of its frames could be tied to a "
-            "file in this repository.",
-            "",
-        ]
+    if diagnosed:
+        # Not a stack: the compiler's own order is the useful one, and the
+        # first error is the one to fix.
+        frame_lines, frame_notes = _display_frames(parsed.unique_frames(), repo_root, resolver)
+        if frame_lines:
+            parts += ["```", *frame_lines, "```", ""]
+        elif parsed.unique_frames():
+            parts += [
+                "A compiler diagnostic was parsed, but none of the files it named "
+                "could be tied to this repository.",
+                "",
+            ]
+        else:
+            parts += ["No stack trace detected in the output.", ""]
     else:
-        parts += ["No stack trace detected in the output.", ""]
+        stack_parts, frame_notes = _render_stacks(parsed, repo_root, resolver)
+        parts += stack_parts
     if frame_notes:
         parts.extend(f"- {note}" for note in frame_notes)
         parts.append("")

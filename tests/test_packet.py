@@ -225,3 +225,55 @@ def test_go_test_names_appear_as_failing_tests(tmp_path):
     text = render(tmp_path, parsed)
     assert "Failing tests:" in text
     assert "- TestTotals" in text
+
+
+# ----------------------------------------------------- the stack section ---
+
+
+def test_stack_section_says_which_direction_it_reads(tmp_path):
+    repo = make_java_repo(tmp_path)
+    text = render(repo, parse_output(JVM_TRACE))
+    assert "innermost frame first" in text
+
+
+def test_stack_section_leads_with_the_frame_the_prose_blames(tmp_path):
+    """The failure section named the NPE while the stack led with the rethrow."""
+    repo = make_java_repo(tmp_path)
+    text = render(repo, parse_output(JVM_TRACE))
+    section = text.split("## Relevant stack")[1].split("## Relevant files")[0]
+    assert section.index("Pricing.java:8") < section.index("Checkout.java:11")
+
+
+def test_stack_section_labels_each_stack_when_there_is_more_than_one(tmp_path):
+    repo = make_java_repo(tmp_path)
+    text = render(repo, parse_output(JVM_TRACE))
+    assert "2 stacks" in text
+    assert "java.lang.NullPointerException:" in text
+
+
+def test_stack_section_counts_the_stacks_it_did_not_print(tmp_path):
+    """A cap that hides its own truncation reads as full coverage."""
+    (tmp_path / "shop").mkdir()
+    (tmp_path / "shop" / "pay.py").write_text("def f():\n    raise KeyError\n")
+    chunks = ["=================================== FAILURES ==========="]
+    for n in range(5):
+        chunks.append(f"________________________ test_{n} ________________________")
+        chunks.append("")
+        chunks.append(f"tests/test_pay.py:{n + 2}: ")
+        chunks.append("shop/pay.py:2: in f")
+        chunks.append("")
+    text = render(tmp_path, parse_output("\n".join(chunks) + "\n"))
+    assert "2 further stack(s) not printed" in text
+    assert "test_3" in text and "test_4" in text
+
+
+def test_a_single_stack_is_printed_without_a_label(tmp_path):
+    repo = make_java_repo(tmp_path)
+    trace = (
+        "java.lang.RuntimeException: boom\n"
+        "\tat com.example.shop.Pricing.applyCoupon(Pricing.java:8)\n"
+    )
+    text = render(repo, parse_output(trace))
+    section = text.split("## Relevant stack")[1].split("## Relevant files")[0]
+    assert "java.lang.RuntimeException:" not in section
+    assert "Pricing.java:8" in section

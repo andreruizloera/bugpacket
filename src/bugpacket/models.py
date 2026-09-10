@@ -29,6 +29,39 @@ class Frame:
     never be searched for in the repository: a project with its own `map.rs`
     would otherwise have it pulled into the packet because the panic passed
     through `std`'s `HashMap`."""
+    block: int = 0
+    """Which `TraceBlock` this frame was printed inside.
+
+    One command's output routinely holds several stacks: pytest prints one per
+    failing test, and a JVM `Caused by:` chain prints one per exception. Without
+    this, they concatenate into a single list that is not any of them."""
+
+
+@dataclass(frozen=True)
+class TraceBlock:
+    """One stack as the runtime printed it, before any reordering.
+
+    Blocks exist because "the stack" is the wrong unit. A run with two failing
+    tests has two stacks, and flattening them produces a list whose adjacent
+    entries never called each other.
+    """
+
+    index: int
+    language: str
+    innermost_first: bool
+    """True when the runtime printed the failure site FIRST.
+
+    Rust, Go, the JVM and V8 do. A CPython traceback does not: `most recent
+    call last` means the frame that raised is at the bottom.
+    """
+    caused_by: bool = False
+    """True when this block continues the previous block's exception chain.
+
+    Only the JVM sets it, and it is what distinguishes `Caused by:` from a
+    second, unrelated exception in the same output.
+    """
+    label: str = ""
+    """The test name or exception this block belongs to, when one was printed."""
 
 
 RANK_REASONS: dict[int, str] = {

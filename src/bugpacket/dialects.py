@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from bugpacket.models import Frame
+from bugpacket.models import Frame, TraceBlock
 
 # Path segments that mean "this file belongs to a toolchain or a dependency,
 # not to the repository being debugged". Each was taken from a real trace.
@@ -87,6 +87,10 @@ class RustState:
     in_backtrace: bool = False
     pending_function: str | None = None
     awaiting_message: bool = False
+    block: int | None = None
+    """The panic this backtrace belongs to. The `stack backtrace:` block
+    continues the panic's block rather than starting its own, because the
+    panic location line is that stack's innermost frame."""
 
 
 def feed_rust(line: str, state: RustState, out: ParsedLines) -> bool:
@@ -100,12 +104,14 @@ def feed_rust(line: str, state: RustState, out: ParsedLines) -> bool:
 
     match = _RUST_PANIC_NEW_RE.match(line)
     if match:
+        state.block = out.open_block("rust", innermost_first=True, label="panic")
         out.frames.append(
             Frame(
                 path=match.group("path"),
                 line=int(match.group("line")),
                 function=None,
                 language="rust",
+                block=state.block,
             )
         )
         state.awaiting_message = True
@@ -114,12 +120,14 @@ def feed_rust(line: str, state: RustState, out: ParsedLines) -> bool:
 
     match = _RUST_PANIC_OLD_RE.match(line)
     if match:
+        state.block = out.open_block("rust", innermost_first=True, label="panic")
         out.frames.append(
             Frame(
                 path=match.group("path"),
                 line=int(match.group("line")),
                 function=None,
                 language="rust",
+                block=state.block,
             )
         )
         out.error_lines.append(match.group("msg").strip())
@@ -129,6 +137,8 @@ def feed_rust(line: str, state: RustState, out: ParsedLines) -> bool:
     if line.strip() == "stack backtrace:":
         state.in_backtrace = True
         state.pending_function = None
+        if state.block is None:  # RUST_BACKTRACE dump with no panic line above it
+            state.block = out.open_block("rust", innermost_first=True, label="backtrace")
         return True
 
     if state.in_backtrace:
@@ -142,6 +152,7 @@ def feed_rust(line: str, state: RustState, out: ParsedLines) -> bool:
                     function=state.pending_function,
                     language="rust",
                     vendored=is_vendored_path(path),
+                    block=state.block or 0,
                 )
             )
             state.pending_function = None
@@ -187,6 +198,10 @@ _GO_TEST_LOC_RE = re.compile(r"^\s{2,}(?P<path>[\w./-]+\.go):(?P<line>\d+): (?P<
 class GoState:
     in_goroutine: bool = False
     pending_function: str | None = None
+    block: int | None = None
+    test_block: int | None = None
+    """The `--- FAIL` this run's `file.go:line:` messages belong to. Go prints
+    them under the test that logged them, not as a stack."""
 
 
 def feed_go(line: str, state: GoState, out: ParsedLines) -> bool:
@@ -194,6 +209,7 @@ def feed_go(line: str, state: GoState, out: ParsedLines) -> bool:
     if _GO_GOROUTINE_RE.match(line):
         state.in_goroutine = True
         state.pending_function = None
+        state.block = out.open_block("go", innermost_first=True, label="goroutine")
         return True
 
     if state.in_goroutine:
@@ -207,6 +223,7 @@ def feed_go(line: str, state: GoState, out: ParsedLines) -> bool:
                     function=state.pending_function,
                     language="go",
                     vendored=is_vendored_path(path),
+                    block=state.block or 0,
                 )
             )
             state.pending_function = None
@@ -229,16 +246,20 @@ def feed_go(line: str, state: GoState, out: ParsedLines) -> bool:
     match = _GO_TEST_FAIL_RE.match(line)
     if match:
         out.failed_test_names.append(match.group("test"))
+        state.test_block = out.open_block("go", innermost_first=True, label=match.group("test"))
         return True
 
     match = _GO_TEST_LOC_RE.match(line)
     if match:
+        if state.test_block is None:  # a bare `file.go:12: msg` with no `--- FAIL`
+            state.test_block = out.open_block("go", innermost_first=True)
         out.frames.append(
             Frame(
                 path=match.group("path"),
                 line=int(match.group("line")),
                 function=None,
                 language="go",
+                block=state.test_block,
             )
         )
         out.error_lines.append(match.group("msg").strip())
@@ -291,6 +312,7 @@ def jvm_path_hint(fq_method: str, file_name: str) -> str | None:
 class JvmState:
     seen_frame: bool = False
     seen_header: bool = False
+    block: int | None = None
 
 
 def feed_jvm(line: str, state: JvmState, out: ParsedLines) -> bool:
@@ -306,6 +328,8 @@ def feed_jvm(line: str, state: JvmState, out: ParsedLines) -> bool:
             vendored = module.startswith(_JDK_MODULE_PREFIXES) or fq.startswith(
                 _JDK_MODULE_PREFIXES
             )
+            if state.block is None:  # frames before any header line
+                state.block = out.open_block("jvm", innermost_first=True)
             out.frames.append(
                 Frame(
                     path=file_name,
@@ -314,6 +338,7 @@ def feed_jvm(line: str, state: JvmState, out: ParsedLines) -> bool:
                     language="jvm",
                     path_hint=None if vendored else jvm_path_hint(fq, file_name),
                     vendored=vendored,
+                    block=state.block,
                 )
             )
         return True
@@ -328,6 +353,9 @@ def feed_jvm(line: str, state: JvmState, out: ParsedLines) -> bool:
             text += f": {match.group('msg')}"
         out.error_lines.append(text)
         out.cause_chain.append(text)
+        state.block = out.open_block(
+            "jvm", innermost_first=True, caused_by=True, label=match.group("cls")
+        )
         return True
 
     # A header must carry a package-qualified class name, so a bare Python
@@ -340,6 +368,7 @@ def feed_jvm(line: str, state: JvmState, out: ParsedLines) -> bool:
         out.error_lines.append(text)
         out.cause_chain.append(text)
         state.seen_header = True
+        state.block = out.open_block("jvm", innermost_first=True, label=match.group("cls"))
         return True
     return False
 
@@ -363,3 +392,36 @@ class ParsedLines:
     failed_test_names: list[str] = field(default_factory=list)
     cause_chain: list[str] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
+    diagnostic_block: int | None = None
+    """The block compiler diagnostics share.
+
+    They are not a stack and are never reversed: a compiler's first error is
+    the one to fix. They get a block only so they cannot be swept into an
+    unrelated one.
+    """
+    blocks: list[TraceBlock] = field(default_factory=list)
+    """Every stack opened during this parse, in the order they were printed.
+
+    Shared by all the dialects AND by the Python and Node readers in
+    `stacktrace.py`, so block indices are chronological across the whole
+    output even though those readers append their frames to a different list.
+    """
+
+    def open_block(
+        self,
+        language: str,
+        innermost_first: bool,
+        *,
+        caused_by: bool = False,
+        label: str = "",
+    ) -> int:
+        """Start a new stack and return the index frames should carry."""
+        block = TraceBlock(
+            index=len(self.blocks),
+            language=language,
+            innermost_first=innermost_first,
+            caused_by=caused_by,
+            label=label,
+        )
+        self.blocks.append(block)
+        return block.index

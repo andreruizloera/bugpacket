@@ -314,3 +314,50 @@ def test_a_rust_path_is_not_claimed_by_the_node_frame_rule():
 )
 def test_vendor_marker_detection(path, expected):
     assert is_vendored_path(path) is expected
+
+
+# ------------------------------------------------------- ordering controls ---
+#
+# Rust, Go and the JVM already print the failure site first WITHIN one stack,
+# so grouping must leave their frame order exactly as captured. These run
+# against the real captures so a regression shows up as a diff against
+# toolchain output, not against a hand-written guess.
+
+
+def test_rust_real_capture_order_is_unchanged_by_grouping():
+    parsed = parse_output(load("rust-panic"))
+    stacks = parsed.ordered_stacks()
+    assert len(stacks) == 1
+    assert [(f.path, f.line) for f in stacks[0].frames] == [
+        (f.path, f.line) for f in parsed.unique_frames()
+    ]
+    assert stacks[0].frames[0].path == "src/pricing.rs"
+
+
+def test_go_real_capture_panic_order_is_unchanged_by_grouping():
+    parsed = parse_output(load("go-panic"))
+    stacks = parsed.ordered_stacks()
+    assert len(stacks) == 1
+    assert [(f.path, f.line) for f in stacks[0].frames] == [
+        (f.path, f.line) for f in parsed.unique_frames()
+    ]
+    assert stacks[0].frames[0].path.endswith("cart/cart.go")
+
+
+def test_jvm_real_capture_leads_with_the_root_cause_frame():
+    parsed = parse_output(load("java-exception"))
+    stacks = parsed.ordered_stacks()
+    assert len(stacks) == 2
+    assert (stacks[0].frames[0].path, stacks[0].frames[0].line) == ("Pricing.java", 8)
+    assert parsed.root_cause is not None
+    assert parsed.root_cause.startswith("java.lang.NullPointerException")
+
+
+def test_compiler_diagnostics_keep_first_error_first():
+    """Diagnostics are not a stack and must never be reversed."""
+    parsed = parse_output(load("javac-error"))
+    stacks = parsed.ordered_stacks()
+    assert len(stacks) == 1
+    assert [(f.path, f.line) for f in stacks[0].frames] == [
+        (f.path, f.line) for f in parsed.unique_frames()
+    ]

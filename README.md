@@ -94,11 +94,24 @@ exit code: 1
 
 ## Relevant stack
 
+2 stacks, each printed innermost frame first: the top line of each is where that failure happened.
+
+test_total_with_percent_coupon:
+
 ```
-examples/shopapp/tests/test_payment.py:19
-examples/shopapp/shop/cart.py:30 in checkout
-examples/shopapp/shop/payment.py:25 in total_cents
 examples/shopapp/shop/payment.py:15
+examples/shopapp/shop/payment.py:25 in total_cents
+examples/shopapp/shop/cart.py:30 in checkout
+examples/shopapp/tests/test_payment.py:19
+```
+
+test_bigger_coupon_never_increases_total:
+
+```
+examples/shopapp/shop/payment.py:15
+examples/shopapp/shop/payment.py:25 in total_cents
+examples/shopapp/shop/cart.py:30 in checkout
+examples/shopapp/tests/test_payment.py:23
 ```
 
 ## Relevant files
@@ -161,13 +174,16 @@ $ java -cp out com.example.shop.Main   (real java on this machine)
   That is the root cause of a chain of 2 exceptions. The outermost, which is where the trace starts and usually not where the bug is:
   java.lang.IllegalStateException: checkout failed for 1 item(s)
   ## Relevant stack
-  src/main/java/com/example/shop/Checkout.java:11 in com.example.shop.Checkout.run (jvm)  [matched by file name; the trace gave no usable path]
-  src/main/java/com/example/shop/Main.java:10 in com.example.shop.Main.main (jvm)  [matched by file name; the trace gave no usable path]
+  2 stacks, each printed innermost frame first: the top line of each is where that failure happened.
+  java.lang.NullPointerException:
   src/main/java/com/example/shop/Pricing.java:8 in com.example.shop.Pricing.applyCoupon (jvm)  [matched by file name; the trace gave no usable path]
   src/main/java/com/example/shop/Cart.java:13 in com.example.shop.Cart.checkout (jvm)  [matched by file name; the trace gave no usable path]
   src/main/java/com/example/shop/Checkout.java:9 in com.example.shop.Checkout.run (jvm)  [matched by file name; the trace gave no usable path]
+  java.lang.IllegalStateException:
+  src/main/java/com/example/shop/Checkout.java:11 in com.example.shop.Checkout.run (jvm)  [matched by file name; the trace gave no usable path]
+  src/main/java/com/example/shop/Main.java:10 in com.example.shop.Main.main (jvm)  [matched by file name; the trace gave no usable path]
   ## Relevant files
-  ### src/main/java/com/example/shop/Pricing.java (rank 1: stack trace)
+  ### src/main/java/com/example/shop/Cart.java (rank 1: stack trace)
 ```
 
 Three decisions in there are worth stating, because each of them is a place
@@ -178,7 +194,10 @@ the outermost exception first, and that one is almost never where the bug is:
 `IllegalStateException: checkout failed` is a rethrow in a catch block, and the
 `NullPointerException` under it is the thing to fix. BugPacket reports the
 deepest `Caused by:` and names the outermost separately, so the agent reading
-the packet starts at the defect rather than at the handler.
+the packet starts at the defect rather than at the handler. The stack section
+is ordered to agree with that: the root cause's frames are printed first, so
+the first line under `## Relevant stack` is `Pricing.java:8` and not the
+`Checkout.java:11` rethrow that the JVM printed at the top.
 
 **A name match that is not unique resolves to nothing.** If two files in the
 repository could be the `Pricing.java` in the trace, BugPacket includes
@@ -346,7 +365,9 @@ Add `.bugpacket/` to your `.gitignore`.
 - the command, its stdout, stderr, and exit code
 - parsed stack traces: CPython tracebacks, pytest-style traces, Node/V8 frames,
   Rust panics and backtraces, Go panics and `go test` failures, and JVM
-  exceptions including `Caused by:` chains
+  exceptions including `Caused by:` chains. One stack per failing test and per
+  exception in a chain, each printed innermost frame first whatever the
+  runtime's own direction was
 - parsed compiler diagnostics for a build that never got as far as running:
   rustc (including the label under the carets), `go build`, and javac
 - the source files implicated by the trace, whole, with a token budget
@@ -365,7 +386,10 @@ Plain Python 3.12+, standard library only, in `src/bugpacket/`:
 
 - `stacktrace.py` owns the single pass over the output and the order the
   dialects are offered each line, which is the only place their regexes could
-  collide. It parses Python, pytest, and Node/V8 directly.
+  collide. It parses Python, pytest, and Node/V8 directly. It also groups
+  frames into the stacks they were printed inside, which is what lets the
+  packet print one stack per failing test instead of concatenating them, and
+  reorders each so the failure site is on top.
 - `dialects.py` holds the Rust, Go, and JVM state machines. They are pure:
   text in, frames out, no filesystem.
 - `diagnostics.py` reads compiler errors, which have locations but no stack.

@@ -34,6 +34,25 @@ check() {
   fi
 }
 
+check_order() {
+  # check_order <file> <string that must come first> <string that must follow>
+  #
+  # `check` only asks whether a line exists, which is why the README's pasted
+  # JVM stack could go stale without CI noticing: every line in it was still
+  # present, in the wrong order. Ordering is the claim here, so it gets its
+  # own assertion.
+  local first last
+  first=$(grep -nF -- "$2" "$1" | head -1 | cut -d: -f1)
+  last=$(grep -nF -- "$3" "$1" | head -1 | cut -d: -f1)
+  if [ -z "$first" ] || [ -z "$last" ] || [ "$first" -ge "$last" ]; then
+    echo "DEMO CHECK FAILED: in $1, expected this line first:" >&2
+    echo "  $2 (line ${first:-missing})" >&2
+    echo "to come before:" >&2
+    echo "  $3 (line ${last:-missing})" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
 # ---------------------------------------------------------------- part 1 ---
 
 TARGET="examples/shopapp/shop/payment.py"
@@ -75,6 +94,14 @@ check "$PY_PACKET" "examples/shopapp/shop/payment.py:15"
 check "$PY_PACKET" "examples/shopapp/shop/cart.py:30 in checkout"
 check "$PY_PACKET" "rank 1: stack trace"
 check "$PY_PACKET" "- tests/test_payment.py::test_total_with_percent_coupon"
+# Two failing tests are two stacks, each led by the line that raised. Flattened
+# and cross-deduplicated, this section used to end on the SECOND test's top
+# frame, directly under the first test's innermost one.
+check "$PY_PACKET" "2 stacks, each printed innermost frame first"
+check "$PY_PACKET" "test_bigger_coupon_never_increases_total:"
+check_order "$PY_PACKET" \
+  "examples/shopapp/shop/payment.py:15" \
+  "examples/shopapp/tests/test_payment.py:19"
 
 # The token numbers the README pastes are only reproducible from a clean
 # checkout: an uncommitted diff legitimately belongs in the packet, so a dirty
@@ -181,6 +208,12 @@ check "$JVM_PACKET" "java.lang.IllegalStateException: checkout failed for 1 item
 check "$JVM_PACKET" "src/main/java/com/example/shop/Pricing.java:8 in com.example.shop.Pricing.applyCoupon (jvm)"
 check "$JVM_PACKET" "[matched by file name; the trace gave no usable path]"
 check "$JVM_PACKET" "### src/main/java/com/example/shop/Pricing.java (rank 1: stack trace)"
+# The root cause's stack must lead. The JVM prints the rethrow at the top, and
+# printing it that way contradicted the packet's own Failure section.
+check "$JVM_PACKET" "2 stacks, each printed innermost frame first"
+check_order "$JVM_PACKET" \
+  "src/main/java/com/example/shop/Pricing.java:8 in com.example.shop.Pricing.applyCoupon (jvm)" \
+  "src/main/java/com/example/shop/Checkout.java:11 in com.example.shop.Checkout.run (jvm)"
 
 section "part 2b: Go panic. The trace names the path the binary was BUILT at."
 run_example go go-panic 1 go run .

@@ -87,6 +87,10 @@ class DiagnosticState:
 
 
 def _record(out: ParsedLines, path: str, line: int, language: str) -> None:
+    if out.diagnostic_block is None:
+        out.diagnostic_block = out.open_block(
+            language, innermost_first=True, label="compiler diagnostics"
+        )
     out.frames.append(
         Frame(
             path=path,
@@ -94,6 +98,7 @@ def _record(out: ParsedLines, path: str, line: int, language: str) -> None:
             function=None,
             language=language,
             vendored=is_vendored_path(path),
+            block=out.diagnostic_block,
         )
     )
 

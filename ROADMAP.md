@@ -17,10 +17,16 @@ where a shipped feature is named, it is named only to say what is left of it.
 - **The remaining stack-trace dialects.** Ruby, and browser-flavored JS
   traces. Rust, Go, and JVM shipped; each new dialect is a contained addition
   to `dialects.py` with a recorded fixture.
-- **Stack-frame ordering.** Frames are kept in the order the runtime printed
-  them, which means Python reads outermost-first and Rust, Go, and the JVM read
-  innermost-first. Normalising to one direction, and saying which, would make
-  the "Relevant stack" section read the same way for every language.
+- **Stack ordering beyond the JVM's `Caused by:`.** Shipped: frames are grouped
+  into the stack they were printed inside, each stack reads innermost frame
+  first whatever direction the runtime used, and a JVM cause chain prints the
+  root cause's stack before the wrapper's. What is NOT handled is a Python
+  `raise X from Y` chain, which prints several tracebacks in one block and is
+  currently left in the order CPython printed it. That happens to put the
+  original cause first, which is the right answer, but it is an accident of
+  CPython's format rather than something the code decides, and `during
+  handling of the above exception` (an unchained re-raise) has the opposite
+  convention and is treated identically today.
 - **Import following for Rust and the JVM.** Both are handled today by the
   trace naming every frame's file, which is usually enough. A Rust `mod`/`use`
   graph and a JVM `import` reader would add the collaborator that the trace
