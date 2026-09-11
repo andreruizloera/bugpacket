@@ -242,8 +242,7 @@ def render_markdown(
     if parsed.root_cause is not None:
         parts.append(
             f"That is the root cause of a chain of {len(parsed.cause_chain)} exceptions. "
-            "The outermost, which is where the trace starts and usually not where "
-            "the bug is:"
+            "The outermost, which is the rethrow and usually not where the bug is:"
         )
         parts += ["", "```", parsed.cause_chain[0], "```", ""]
     if len(parsed.diagnostics) > 1:

@@ -171,7 +171,7 @@ example JVM project:
 $ java -cp out com.example.shop.Main   (real java on this machine)
   ## Failure
   java.lang.NullPointerException: Cannot invoke "java.lang.Integer.intValue()" because the return value of "java.util.Map.get(Object)" is null
-  That is the root cause of a chain of 2 exceptions. The outermost, which is where the trace starts and usually not where the bug is:
+  That is the root cause of a chain of 2 exceptions. The outermost, which is the rethrow and usually not where the bug is:
   java.lang.IllegalStateException: checkout failed for 1 item(s)
   ## Relevant stack
   2 stacks, each printed innermost frame first: the top line of each is where that failure happened.
@@ -197,7 +197,8 @@ deepest `Caused by:` and names the outermost separately, so the agent reading
 the packet starts at the defect rather than at the handler. The stack section
 is ordered to agree with that: the root cause's frames are printed first, so
 the first line under `## Relevant stack` is `Pricing.java:8` and not the
-`Checkout.java:11` rethrow that the JVM printed at the top.
+`Checkout.java:11` rethrow that the JVM printed at the top. A CPython `raise X
+from Y` chain gets the same treatment, in the section below.
 
 **A name match that is not unique resolves to nothing.** If two files in the
 repository could be the `Pricing.java` in the trace, BugPacket includes
@@ -223,11 +224,69 @@ rank 3. That is how `pricing/pricing.go` reaches the packet in part 2c of the
 demo when the trace named only `pricing/pricing_test.go`.
 
 The example projects under `examples/multilang/` are real, compilable Rust, Go,
-and Java. `examples/multilang/traces/` holds output captured from actually
-running them (`record-traces.sh` is how, and CI re-runs the live toolchains on
-every push). `./demo.sh` runs the real compilers when the machine has them and
-replays those recordings when it does not, so the demo works from a clean clone
-with no Rust, Go, or JVM installed.
+Java, and Python. `examples/multilang/traces/` holds output captured from
+actually running them (`record-traces.sh` is how, and CI re-runs the live
+toolchains on every push). `./demo.sh` runs the real compilers when the machine
+has them and replays those recordings when it does not, so the demo works from
+a clean clone with no Rust, Go, or JVM installed.
+
+## Chained exceptions in CPython
+
+The JVM is not the only runtime that prints several tracebacks for one failure.
+CPython prints one per exception in a chain, joined by a line of prose, and
+there are two such lines. They look alike and they mean opposite things:
+
+- `The above exception was the direct cause of the following exception:` is
+  `raise X from Y`. Y is printed first and Y is the bug; X is the rethrow.
+- `During handling of the above exception, another exception occurred:` is an
+  exception raised inside an `except` block. The earlier one is printed first
+  and is background; the LAST one is the failure.
+
+So each shape needs the opposite answer to the other, on both of the questions
+the packet asks. Real output from `./demo.sh`, part 2e:
+
+```
+$ python3 chained.py cause   (real python3 on this machine)
+  ## Failure
+  KeyError: 'GBP'
+  That is the root cause of a chain of 2 exceptions. The outermost, which is the rethrow and usually not where the bug is:
+  LookupError: no exchange rate for GBP
+  ## Relevant stack
+  2 stacks, each printed innermost frame first: the top line of each is where that failure happened.
+  KeyError: 'GBP':
+  shop/pricing.py:14 in rate_for
+  shop/pricing.py:30 in convert_cents
+  LookupError: no exchange rate for GBP:
+  shop/pricing.py:32 in convert_cents
+  chained.py:24 in main
+  chained.py:33 in <module>
+
+$ python3 chained.py context   (real python3 on this machine)
+  ## Failure
+  TypeError: can only concatenate str (not "NoneType") to str
+  ## Relevant stack
+  2 stacks, each printed innermost frame first: the top line of each is where that failure happened.
+  TypeError: can only concatenate str (not "NoneType") to str:
+  shop/pricing.py:19 in fallback_line
+  shop/pricing.py:48 in report_total
+  chained.py:26 in main
+  chained.py:33 in <module>
+  KeyError: 'GBP':
+  shop/pricing.py:14 in rate_for
+  shop/pricing.py:46 in report_total
+```
+
+The first run reports the `KeyError` and names the `LookupError` separately,
+the same treatment a JVM `Caused by:` chain gets, and leaves the stacks in the
+order CPython printed them because that order already leads with the cause. The
+second reports the `TypeError` and does NOT call it the root cause of anything,
+because it is not one, and moves its stack above the `KeyError` that CPython
+printed first.
+
+A run can contain both separators: an exception with a cause, caught, and then
+failed on inside the handler. The cut is at the `During handling` link, so the
+failure and its own causes lead and the handled chain follows as background.
+`examples/multilang/python/chained.py both` is that case, and it is a fixture.
 
 ## Builds that never compile
 
@@ -365,9 +424,11 @@ Add `.bugpacket/` to your `.gitignore`.
 - the command, its stdout, stderr, and exit code
 - parsed stack traces: CPython tracebacks, pytest-style traces, Node/V8 frames,
   Rust panics and backtraces, Go panics and `go test` failures, and JVM
-  exceptions including `Caused by:` chains. One stack per failing test and per
-  exception in a chain, each printed innermost frame first whatever the
-  runtime's own direction was
+  exceptions including `Caused by:` chains, and CPython chains of both kinds
+  (`raise X from Y` and an exception raised while handling another). One stack
+  per failing test and per exception in a chain, each printed innermost frame
+  first whatever the runtime's own direction was, and the chain ordered so the
+  stack to read first leads
 - parsed compiler diagnostics for a build that never got as far as running:
   rustc (including the label under the carets), `go build`, and javac
 - the source files implicated by the trace, whole, with a token budget
@@ -389,7 +450,9 @@ Plain Python 3.12+, standard library only, in `src/bugpacket/`:
   collide. It parses Python, pytest, and Node/V8 directly. It also groups
   frames into the stacks they were printed inside, which is what lets the
   packet print one stack per failing test instead of concatenating them, and
-  reorders each so the failure site is on top.
+  reorders each so the failure site is on top. It also reads the two lines
+  CPython prints between chained tracebacks, which decide which stack of a
+  chain leads and whether the chain has a root cause at all.
 - `dialects.py` holds the Rust, Go, and JVM state machines. They are pure:
   text in, frames out, no filesystem.
 - `diagnostics.py` reads compiler errors, which have locations but no stack.
@@ -418,6 +481,10 @@ Plain Python 3.12+, standard library only, in `src/bugpacket/`:
 - Stack-trace parsing covers CPython, pytest, Node/V8, Rust, Go, and JVM
   formats. Ruby and browser-flavored JS traces are not parsed yet (see
   ROADMAP.md).
+- **Exception chains are read for the JVM and CPython only.** A Node `Error`
+  with a `cause`, a Go error wrapped with `%w`, and a Rust `source()` chain are
+  each parsed as whatever single failure they print, with no second stack
+  identified (see ROADMAP.md).
 - **A compiler diagnostic is read from rustc, `go build`, and javac only.**
   TypeScript's `tsc`, clang and gcc, and MSBuild print their own shapes and are
   not parsed yet (see ROADMAP.md). A build tool that wraps a compiler is fine

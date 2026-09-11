@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 30, in convert_cents
+    rate = rate_for(currency)
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 14, in rate_for
+    return RATES[currency]
+           ~~~~~^^^^^^^^^^
+KeyError: 'GBP'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/private/tmp/bugpacket-build/pyshop/chained.py", line 33, in <module>
+    main()
+    ~~~~^^
+  File "/private/tmp/bugpacket-build/pyshop/chained.py", line 24, in main
+    pricing.convert_cents(2499, "GBP")
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 32, in convert_cents
+    raise LookupError(f"no exchange rate for {currency}") from exc
+LookupError: no exchange rate for GBP

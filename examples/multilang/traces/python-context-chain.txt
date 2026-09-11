@@ -1,0 +1,24 @@
+Traceback (most recent call last):
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 46, in report_total
+    rate_for(currency)
+    ~~~~~~~~^^^^^^^^^^
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 14, in rate_for
+    return RATES[currency]
+           ~~~~~^^^^^^^^^^
+KeyError: 'GBP'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/private/tmp/bugpacket-build/pyshop/chained.py", line 33, in <module>
+    main()
+    ~~~~^^
+  File "/private/tmp/bugpacket-build/pyshop/chained.py", line 26, in main
+    pricing.report_total("GBP")
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 48, in report_total
+    return fallback_line(None)
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 19, in fallback_line
+    return "total: " + converted  # type: ignore[operator]
+           ~~~~~~~~~~^~~~~~~~~~~
+TypeError: can only concatenate str (not "NoneType") to str

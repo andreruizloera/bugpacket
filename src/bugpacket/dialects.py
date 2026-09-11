@@ -354,7 +354,7 @@ def feed_jvm(line: str, state: JvmState, out: ParsedLines) -> bool:
         out.error_lines.append(text)
         out.cause_chain.append(text)
         state.block = out.open_block(
-            "jvm", innermost_first=True, caused_by=True, label=match.group("cls")
+            "jvm", innermost_first=True, chain="cause", label=match.group("cls")
         )
         return True
 
@@ -412,7 +412,7 @@ class ParsedLines:
         language: str,
         innermost_first: bool,
         *,
-        caused_by: bool = False,
+        chain: str = "",
         label: str = "",
     ) -> int:
         """Start a new stack and return the index frames should carry."""
@@ -420,7 +420,7 @@ class ParsedLines:
             index=len(self.blocks),
             language=language,
             innermost_first=innermost_first,
-            caused_by=caused_by,
+            chain=chain,
             label=label,
         )
         self.blocks.append(block)

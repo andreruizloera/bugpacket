@@ -1,0 +1,33 @@
+Traceback (most recent call last):
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 30, in convert_cents
+    rate = rate_for(currency)
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 14, in rate_for
+    return RATES[currency]
+           ~~~~~^^^^^^^^^^
+KeyError: 'GBP'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 63, in checkout
+    convert_cents(amount_cents, currency)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 32, in convert_cents
+    raise LookupError(f"no exchange rate for {currency}") from exc
+LookupError: no exchange rate for GBP
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/private/tmp/bugpacket-build/pyshop/chained.py", line 33, in <module>
+    main()
+    ~~~~^^
+  File "/private/tmp/bugpacket-build/pyshop/chained.py", line 28, in main
+    pricing.checkout(2499, "GBP")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 65, in checkout
+    return fallback_line(None)
+  File "/private/tmp/bugpacket-build/pyshop/shop/pricing.py", line 19, in fallback_line
+    return "total: " + converted  # type: ignore[operator]
+           ~~~~~~~~~~^~~~~~~~~~~
+TypeError: can only concatenate str (not "NoneType") to str

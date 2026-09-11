@@ -1,5 +1,11 @@
 """Stack-trace parsing against realistic Python, pytest, and Node output."""
 
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
 from bugpacket.stacktrace import parse_output
 
 PYTHON_TRACEBACK = """\
@@ -278,4 +284,154 @@ def test_node_stack_is_left_alone_because_v8_already_leads_with_the_throw():
         ("/app/src/checkout.js", 12),
         ("/app/src/index.js", 3),
         ("node:internal/modules/cjs/loader", 1358),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# CPython exception chains.
+#
+# These run against `examples/multilang/traces/python-*-chain.txt`, which is
+# output CPython actually printed (see `examples/multilang/record-traces.sh`),
+# and `test_the_recorded_chains_still_match_what_cpython_prints` re-runs the
+# example live so a fixture cannot quietly stop being true.
+#
+# The two separator lines CPython prints between chained tracebacks look alike
+# and mean opposite things, and before this the parser had never heard of
+# either. Measured on the shipped code, that left each shape wrong on exactly
+# one of the two axes: `raise X from Y` ordered its stacks right and reported
+# the RETHROW as the failure, and `During handling` reported the failure right
+# and ordered its stacks backwards.
+# ---------------------------------------------------------------------------
+
+CHAINS = Path(__file__).resolve().parents[1] / "examples" / "multilang" / "traces"
+EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "multilang" / "python"
+
+
+def chain(name: str) -> str:
+    return (CHAINS / f"python-{name}-chain.txt").read_text()
+
+
+def _shape(parsed):
+    """(chain link per block, leading function of each stack), for comparison."""
+    stacks = parsed.ordered_stacks()
+    return (
+        [s.block.chain for s in stacks],
+        [s.frames[0].function for s in stacks],
+        parsed.distilled_failure(),
+    )
+
+
+def test_direct_cause_chain_reports_the_cause_not_the_rethrow():
+    """`error_lines[-1]` is the wrapper, which is the JVM bug in Python clothes."""
+    parsed = parse_output(chain("cause"))
+    assert parsed.root_cause == "KeyError: 'GBP'"
+    assert parsed.distilled_failure() == "KeyError: 'GBP'"
+    assert parsed.cause_chain == [
+        "LookupError: no exchange rate for GBP",
+        "KeyError: 'GBP'",
+    ]
+
+
+def test_direct_cause_chain_keeps_cpython_printed_order():
+    """CPython prints the cause first, so this run is the one NOT reversed."""
+    parsed = parse_output(chain("cause"))
+    stacks = parsed.ordered_stacks()
+    assert [s.block.chain for s in stacks] == ["", "wrapped"]
+    assert stacks[0].frames[0].function == "rate_for"
+    assert stacks[1].frames[0].function == "convert_cents"
+
+
+def test_handling_chain_leads_with_the_exception_that_actually_escaped():
+    """`During handling` is not a cause link: the LAST traceback is the failure."""
+    parsed = parse_output(chain("context"))
+    stacks = parsed.ordered_stacks()
+    assert [s.block.chain for s in stacks] == ["context", ""]
+    assert stacks[0].frames[0].function == "fallback_line"
+    assert stacks[1].frames[0].function == "rate_for"
+
+
+def test_handling_chain_is_not_a_cause_chain():
+    """Calling it one would report the KeyError, which nothing is asking about."""
+    parsed = parse_output(chain("context"))
+    assert parsed.cause_chain == []
+    assert parsed.root_cause is None
+    assert parsed.distilled_failure() == (
+        'TypeError: can only concatenate str (not "NoneType") to str'
+    )
+
+
+def test_the_two_separators_are_not_interchangeable():
+    """The defect in one sentence: identical treatment, opposite meanings."""
+    cause, context = parse_output(chain("cause")), parse_output(chain("context"))
+    assert [s.block.chain for s in cause.ordered_stacks()] == ["", "wrapped"]
+    assert [s.block.chain for s in context.ordered_stacks()] == ["context", ""]
+    assert cause.root_cause is not None and context.root_cause is None
+
+
+def test_both_separators_in_one_output_cut_at_the_handling_link():
+    """A cause chain that was itself being handled is background, not the bug."""
+    parsed = parse_output(chain("both"))
+    stacks = parsed.ordered_stacks()
+    assert [s.block.chain for s in stacks] == ["context", "", "wrapped"]
+    assert stacks[0].frames[0].function == "fallback_line"
+    # The background keeps CPython's order, cause before rethrow: `rate_for`
+    # raised the KeyError and `convert_cents` is the line that wrapped it.
+    assert [s.frames[0].function for s in stacks[1:]] == ["rate_for", "convert_cents"]
+    assert parsed.cause_chain == []
+    assert parsed.distilled_failure() == (
+        'TypeError: can only concatenate str (not "NoneType") to str'
+    )
+
+
+def test_an_unchained_second_traceback_is_not_reordered():
+    """Two unrelated tracebacks in one log are two failures, not a chain."""
+    text = chain("cause").replace(
+        "The above exception was the direct cause of the following exception:",
+        "the next command also failed:",
+    )
+    stacks = parse_output(text).ordered_stacks()
+    assert [s.block.chain for s in stacks] == ["", ""]
+    assert [s.frames[0].function for s in stacks] == ["rate_for", "convert_cents"]
+    assert parse_output(text).cause_chain == []
+
+
+@pytest.mark.parametrize("shape", ["cause", "context", "both"])
+def test_the_recorded_chains_still_match_what_cpython_prints(shape):
+    """Re-run the example and parse the live output.
+
+    Paths and line numbers differ between the recording directory and this
+    one, so the recorded TEXT cannot be compared. What must match is every
+    conclusion drawn from it, which is the part a fixture going stale would
+    silently change.
+    """
+    result = subprocess.run(
+        [sys.executable, "chained.py", shape],
+        cwd=EXAMPLE,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert _shape(parse_output(result.stderr)) == _shape(parse_output(chain(shape)))
+
+
+def test_each_traceback_in_a_chain_is_labelled_with_its_exception():
+    """Unlabelled, two stacks print as one whose middle never called itself."""
+    stacks = parse_output(chain("cause")).ordered_stacks()
+    assert [s.block.label for s in stacks] == [
+        "KeyError: 'GBP'",
+        "LookupError: no exchange rate for GBP",
+    ]
+
+
+def test_a_lone_traceback_is_not_labelled():
+    """There is nothing to tell it apart from, so a header would be noise."""
+    stacks = parse_output(PYTHON_TRACEBACK).ordered_stacks()
+    assert [s.block.label for s in stacks] == [""]
+
+
+def test_labelling_does_not_overwrite_a_pytest_test_name():
+    stacks = parse_output(PYTEST_TWO_FAILURES).ordered_stacks()
+    assert [s.block.label for s in stacks] == [
+        "test_total_with_percent_coupon",
+        "test_bigger_coupon_never_increases_total",
     ]

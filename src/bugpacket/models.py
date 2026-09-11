@@ -54,11 +54,27 @@ class TraceBlock:
     Rust, Go, the JVM and V8 do. A CPython traceback does not: `most recent
     call last` means the frame that raised is at the bottom.
     """
-    caused_by: bool = False
-    """True when this block continues the previous block's exception chain.
+    chain: str = ""
+    """How this block relates to the block printed immediately before it.
 
-    Only the JVM sets it, and it is what distinguishes `Caused by:` from a
-    second, unrelated exception in the same output.
+    This is what distinguishes a continued exception chain from a second,
+    unrelated failure in the same output, and the three chained values are not
+    interchangeable: they disagree about which END of the chain the reader
+    wants.
+
+    - `""`: unrelated. A second failing test, a second panic.
+    - `"cause"`: this block IS the previous block's cause. A JVM `Caused by:`
+      line. The runtime printed the wrapper first, so the LAST block of the run
+      is the root cause.
+    - `"wrapped"`: the previous block is THIS block's cause. CPython's `The
+      above exception was the direct cause of the following exception:`, which
+      is what `raise X from Y` prints. The runtime printed the cause first, so
+      the FIRST block of the run is the root cause. Same relation as `"cause"`,
+      printed in the opposite order.
+    - `"context"`: the previous block was merely being handled when this one
+      was raised. CPython's `During handling of the above exception, another
+      exception occurred:`. NOT a cause: the last block is the failure and the
+      ones before it are background.
     """
     label: str = ""
     """The test name or exception this block belongs to, when one was printed."""

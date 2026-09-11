@@ -33,6 +33,22 @@ cp -R java "$BUILD/javabuild"
   java -cp out com.example.shop.Main > "$OUT/java-exception.txt" 2>&1
 ) || true
 
+# The CPython chain recordings. Copied to a throwaway directory for the same
+# reason the Go one is: the tracebacks name the directory they ran in, and a
+# fixture whose paths exist on the recorder's machine and nowhere else is the
+# case worth having. `PY` is the interpreter, because these formats are
+# version-sensitive (3.11 added the `~~~^^^` caret lines under each frame) and
+# this repository supports 3.12 and up.
+PY="${PY:-python3}"
+"$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' || {
+  echo "record-traces.sh: PY must be Python 3.12 or newer; got $("$PY" -V)" >&2
+  exit 1
+}
+cp -R python "$BUILD/pyshop"
+for shape in cause context both; do
+  (cd "$BUILD/pyshop" && "$PY" chained.py "$shape" > "$OUT/python-$shape-chain.txt" 2>&1) || true
+done
+
 cp -R rust "$BUILD/rustbuild"
 (cd "$BUILD/rustbuild" && RUST_BACKTRACE=1 cargo run --quiet > "$OUT/rust-panic.txt" 2>&1) || true
 

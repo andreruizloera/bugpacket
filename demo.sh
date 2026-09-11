@@ -152,6 +152,7 @@ setup_repo() {
 setup_repo java
 setup_repo go
 setup_repo rust
+setup_repo python
 
 # Run the real toolchain when this machine has it, and replay the recorded
 # output of a real run when it does not. The recordings in
@@ -242,6 +243,37 @@ check "$RUST_PACKET" "### src/pricing.rs (rank 1: stack trace)"
 # The std frames in the backtrace must not appear as repository files.
 if grep -qE '^### .*(option|function)\.rs' "$RUST_PACKET"; then
   echo "DEMO CHECK FAILED: a Rust standard-library file was ranked into the packet" >&2
+  FAILURES=$((FAILURES + 1))
+fi
+
+section "part 2e: CPython chains. Two separators that look alike and are not."
+# `raise X from Y`. CPython prints Y first, so the ORDER is already right and
+# the failure is the thing that was wrong: the last line of the output is the
+# rethrow, and reporting it sends a reader to the handler.
+run_example python python-cause-chain 1 python3 chained.py cause
+show_packet python
+PY_CHAIN_PACKET="$WORK/python/.bugpacket/packet.md"
+check "$PY_CHAIN_PACKET" "KeyError: 'GBP'"
+check "$PY_CHAIN_PACKET" "That is the root cause of a chain of 2 exceptions."
+check "$PY_CHAIN_PACKET" "LookupError: no exchange rate for GBP"
+check_order "$PY_CHAIN_PACKET" \
+  "shop/pricing.py:14 in rate_for" \
+  "shop/pricing.py:32 in convert_cents"
+
+# An exception raised while handling another. CPython prints the same way and
+# means the opposite: here the LAST traceback is the failure, so the FAILURE is
+# already right and the order is what was wrong.
+run_example python python-context-chain 1 python3 chained.py context
+show_packet python
+check "$PY_CHAIN_PACKET" 'TypeError: can only concatenate str (not "NoneType") to str'
+check "$PY_CHAIN_PACKET" "2 stacks, each printed innermost frame first"
+check_order "$PY_CHAIN_PACKET" \
+  "shop/pricing.py:19 in fallback_line" \
+  "shop/pricing.py:14 in rate_for"
+# A `During handling` run is not a cause chain, so the packet must not claim
+# one. Reporting the KeyError here would answer a question nobody asked.
+if grep -qF "That is the root cause of a chain" "$PY_CHAIN_PACKET"; then
+  echo "DEMO CHECK FAILED: a 'During handling' run was reported as a cause chain" >&2
   FAILURES=$((FAILURES + 1))
 fi
 
